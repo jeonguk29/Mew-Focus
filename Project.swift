@@ -72,6 +72,7 @@ let project = Project(
             bundleId: "com.mashup.MewFocus.Design",
             deploymentTargets: .macOS("14.0"),
             sources: ["Sources/MewFocusDesign/**"],
+            resources: ["Resources/MewFocusDesign/**"],
             dependencies: []
         ),
         .target(
