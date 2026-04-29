@@ -1,4 +1,4 @@
-public enum TimerState: Equatable, Sendable {
+public enum TimerState: Codable, Equatable, Sendable {
     case idle
     case running
     case paused

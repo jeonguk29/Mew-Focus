@@ -1,6 +1,6 @@
 import Foundation
 
-public struct FocusSession: Equatable, Sendable {
+public struct FocusSession: Codable, Equatable, Sendable {
     public var preset: FocusPreset?
     public var duration: TimeInterval
     public var remainingTime: TimeInterval

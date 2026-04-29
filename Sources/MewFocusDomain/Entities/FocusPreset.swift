@@ -1,6 +1,6 @@
 import Foundation
 
-public struct FocusPreset: Equatable, Identifiable, Sendable {
+public struct FocusPreset: Codable, Equatable, Identifiable, Sendable {
     public let id: String
     public let title: String
     public let duration: TimeInterval
