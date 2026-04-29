@@ -30,7 +30,8 @@ let project = Project(
             resources: ["Resources/MewFocusApp/**"],
             dependencies: [
                 .target(name: "MewFocusPresentation"),
-                .target(name: "MewFocusData")
+                .target(name: "MewFocusData"),
+                .target(name: "MewFocusDesign")
             ]
         ),
         .target(
