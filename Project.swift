@@ -27,7 +27,7 @@ let project = Project(
                 ]
             ),
             sources: ["Sources/MewFocusApp/**"],
-            resources: [],
+            resources: ["Resources/MewFocusApp/**"],
             dependencies: [
                 .target(name: "MewFocusPresentation"),
                 .target(name: "MewFocusData")
