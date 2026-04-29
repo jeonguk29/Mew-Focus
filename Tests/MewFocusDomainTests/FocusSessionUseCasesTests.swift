@@ -27,4 +27,31 @@ final class FocusSessionUseCasesTests: XCTestCase {
         XCTAssertEqual(result.state, .idle)
         XCTAssertEqual(result.remainingTime, 1500)
     }
+
+    func testTickSessionDecreasesRemainingTimeWhileRunning() {
+        let session = FocusSession(duration: 10, remainingTime: 10, state: .running)
+
+        let result = TickFocusSessionUseCase().execute(session)
+
+        XCTAssertEqual(result.state, .running)
+        XCTAssertEqual(result.remainingTime, 9)
+    }
+
+    func testTickSessionCompletesWhenRemainingTimeReachesZero() {
+        let session = FocusSession(duration: 10, remainingTime: 1, state: .running)
+
+        let result = TickFocusSessionUseCase().execute(session)
+
+        XCTAssertEqual(result.state, .completed)
+        XCTAssertEqual(result.remainingTime, 0)
+    }
+
+    func testTickSessionDoesNothingWhilePaused() {
+        let session = FocusSession(duration: 10, remainingTime: 5, state: .paused)
+
+        let result = TickFocusSessionUseCase().execute(session)
+
+        XCTAssertEqual(result.state, .paused)
+        XCTAssertEqual(result.remainingTime, 5)
+    }
 }
