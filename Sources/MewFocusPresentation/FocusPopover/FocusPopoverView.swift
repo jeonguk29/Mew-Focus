@@ -6,6 +6,9 @@ public struct FocusPopoverView: View {
     @State private var session = FocusSession()
     @State private var lastTickDate: Date?
 
+    private let snapshotRepository: FocusSessionSnapshotRepository?
+    private let reloadWidgetTimelines: () -> Void
+
     private let startUseCase = StartFocusSessionUseCase()
     private let pauseUseCase = PauseFocusSessionUseCase()
     private let resetUseCase = ResetFocusSessionUseCase()
@@ -13,7 +16,13 @@ public struct FocusPopoverView: View {
     private let tickUseCase = TickFocusSessionUseCase()
     private let countdownTimer = Timer.publish(every: 1.0 / 30.0, on: .main, in: .common).autoconnect()
 
-    public init() {}
+    public init(
+        snapshotRepository: FocusSessionSnapshotRepository? = nil,
+        reloadWidgetTimelines: @escaping () -> Void = {}
+    ) {
+        self.snapshotRepository = snapshotRepository
+        self.reloadWidgetTimelines = reloadWidgetTimelines
+    }
 
     public var body: some View {
         VStack(spacing: 18) {
@@ -30,6 +39,9 @@ public struct FocusPopoverView: View {
         .frame(width: 530)
         .background(MewFocusColor.surface)
         .clipShape(RoundedRectangle(cornerRadius: 28, style: .continuous))
+        .onAppear {
+            restoreSnapshot()
+        }
         .onReceive(countdownTimer) { date in
             tickSession(now: date)
         }
@@ -151,6 +163,7 @@ public struct FocusPopoverView: View {
                         remainingTime: preset.duration,
                         state: .idle
                     )
+                    saveSnapshot()
                 }
                 .buttonStyle(.plain)
                 .font(.system(size: 15, weight: .bold))
@@ -275,16 +288,19 @@ public struct FocusPopoverView: View {
             session = startUseCase.execute(session)
             lastTickDate = Date()
         }
+        saveSnapshot()
     }
 
     private func resetSession() {
         lastTickDate = nil
         session = resetUseCase.execute(session)
+        saveSnapshot()
     }
 
     private func endSession() {
         lastTickDate = nil
         session = endUseCase.execute(session)
+        saveSnapshot()
     }
 
     private func tickSession(now: Date) {
@@ -298,6 +314,40 @@ public struct FocusPopoverView: View {
         let elapsedTime = now.timeIntervalSince(lastTickDate)
         session = tickUseCase.execute(session, elapsedTime: elapsedTime)
         self.lastTickDate = session.state == .running ? now : nil
+
+        if session.state == .completed {
+            saveSnapshot(now: now)
+        }
+    }
+
+    private func restoreSnapshot() {
+        guard let snapshot = snapshotRepository?.loadSnapshot() else {
+            saveSnapshot()
+            return
+        }
+
+        session = resolvedSession(from: snapshot, now: Date())
+        lastTickDate = session.state == .running ? Date() : nil
+    }
+
+    private func saveSnapshot(now: Date = Date()) {
+        snapshotRepository?.saveSnapshot(
+            FocusSessionSnapshot(session: session, updatedAt: now)
+        )
+        reloadWidgetTimelines()
+    }
+
+    private func resolvedSession(from snapshot: FocusSessionSnapshot, now: Date) -> FocusSession {
+        guard snapshot.session.state == .running else { return snapshot.session }
+
+        let elapsedTime = max(now.timeIntervalSince(snapshot.updatedAt), 0)
+        let remainingTime = max(snapshot.session.remainingTime - elapsedTime, 0)
+        return FocusSession(
+            preset: snapshot.session.preset,
+            duration: snapshot.session.duration,
+            remainingTime: remainingTime,
+            state: remainingTime > 0 ? .running : .completed
+        )
     }
 }
 

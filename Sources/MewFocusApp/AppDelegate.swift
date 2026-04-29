@@ -1,16 +1,21 @@
 import AppKit
+import MewFocusData
 import MewFocusDesign
 import MewFocusPresentation
 import SwiftUI
+import WidgetKit
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusItem: NSStatusItem?
     private let popover = NSPopover()
+    private let snapshotRepository = AppGroupFocusSessionSnapshotRepository()
     private var animationTimer: Timer?
     private var currentMenuBarFrameIndex = 0
     private let menuBarIconSize = NSSize(width: 22, height: 22)
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        guard ensureSingleInstance() else { return }
+
         NSApp.setActivationPolicy(.accessory)
 
         let statusItem = NSStatusBar.system.statusItem(withLength: 28)
@@ -23,21 +28,57 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         popover.behavior = .transient
         popover.contentSize = NSSize(width: 530, height: 660)
-        popover.contentViewController = NSHostingController(rootView: FocusPopoverView())
+        popover.contentViewController = NSHostingController(
+            rootView: FocusPopoverView(
+                snapshotRepository: snapshotRepository,
+                reloadWidgetTimelines: {
+                    WidgetCenter.shared.reloadTimelines(ofKind: "MewFocusCatWidget")
+                }
+            )
+        )
     }
 
     func applicationWillTerminate(_ notification: Notification) {
         animationTimer?.invalidate()
+        if let statusItem {
+            NSStatusBar.system.removeStatusItem(statusItem)
+        }
+    }
+
+    func application(_ application: NSApplication, open urls: [URL]) {
+        guard urls.contains(where: { $0.scheme == "mewfocus" }) else { return }
+
+        NSApp.activate(ignoringOtherApps: true)
+        showPopover()
     }
 
     @objc private func togglePopover() {
-        guard let button = statusItem?.button else { return }
-
         if popover.isShown {
             popover.performClose(nil)
         } else {
-            popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
+            showPopover()
         }
+    }
+
+    private func showPopover() {
+        guard let button = statusItem?.button else { return }
+
+        popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
+    }
+
+    private func ensureSingleInstance() -> Bool {
+        let runningApps = NSRunningApplication.runningApplications(
+            withBundleIdentifier: Bundle.main.bundleIdentifier ?? ""
+        )
+        let otherRunningApps = runningApps.filter { $0.processIdentifier != ProcessInfo.processInfo.processIdentifier }
+
+        guard otherRunningApps.isEmpty else {
+            otherRunningApps.first?.activate()
+            NSApp.terminate(nil)
+            return false
+        }
+
+        return true
     }
 
     private func startMenuBarCatAnimation() {
