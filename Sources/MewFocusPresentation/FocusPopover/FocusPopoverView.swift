@@ -3,6 +3,22 @@ import MewFocusDesign
 import MewFocusDomain
 import SwiftUI
 
+public final class FocusPopoverDisplaySettings: ObservableObject {
+    public static let defaultScale = 0.64
+    public static let minimumScale = 0.58
+    public static let maximumScale = 0.92
+
+    @Published public var scale: Double
+
+    public init(scale: Double = FocusPopoverDisplaySettings.defaultScale) {
+        self.scale = min(max(scale, Self.minimumScale), Self.maximumScale)
+    }
+
+    public func resetScale() {
+        scale = Self.defaultScale
+    }
+}
+
 public struct FocusPopoverView: View {
     @State private var session = FocusSession()
     @State private var lastTickDate: Date?
@@ -12,9 +28,11 @@ public struct FocusPopoverView: View {
     @State private var hasRecordedCurrentSession = false
     @State private var isDailyFocusListPresented = false
     @State private var isSessionListPresented = false
+    @State private var isSettingsPresented = false
     @State private var selectedSessionDate = Calendar.current.startOfDay(for: Date())
     @State private var selectedDateSessions: [SessionRecord] = []
     @State private var statisticsDay = Calendar.current.startOfDay(for: Date())
+    @ObservedObject private var displaySettings: FocusPopoverDisplaySettings
 
     private let snapshotRepository: FocusSessionSnapshotRepository?
     private let statisticsRepository: (any FocusStatisticsRepository)?
@@ -30,10 +48,12 @@ public struct FocusPopoverView: View {
     public init(
         snapshotRepository: FocusSessionSnapshotRepository? = nil,
         statisticsRepository: (any FocusStatisticsRepository)? = nil,
+        displaySettings: FocusPopoverDisplaySettings = FocusPopoverDisplaySettings(),
         reloadWidgetTimelines: @escaping () -> Void = {}
     ) {
         self.snapshotRepository = snapshotRepository
         self.statisticsRepository = statisticsRepository
+        self._displaySettings = ObservedObject(wrappedValue: displaySettings)
         self.reloadWidgetTimelines = reloadWidgetTimelines
     }
 
@@ -84,12 +104,19 @@ public struct FocusPopoverView: View {
 
             Spacer()
 
-            Button(action: {}) {
+            Button {
+                isDailyFocusListPresented = false
+                isSessionListPresented = false
+                isSettingsPresented = true
+            } label: {
                 Image(systemName: "gearshape")
                     .font(.system(size: 28, weight: .semibold))
                     .foregroundStyle(MewFocusColor.textPrimary)
             }
             .buttonStyle(.plain)
+            .popover(isPresented: $isSettingsPresented, arrowEdge: .bottom) {
+                FocusSettingsView(displaySettings: displaySettings)
+            }
         }
     }
 
@@ -789,6 +816,83 @@ private struct SessionListRow: View {
     private var durationText: String {
         let totalMinutes = max(Int(record.duration / 60), 1)
         return "\(totalMinutes)분"
+    }
+}
+
+private struct FocusSettingsView: View {
+    @ObservedObject var displaySettings: FocusPopoverDisplaySettings
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            HStack(spacing: 12) {
+                Image(systemName: "slider.horizontal.3")
+                    .font(.system(size: 18, weight: .bold))
+                    .foregroundStyle(MewFocusColor.coral)
+                    .frame(width: 34, height: 34)
+                    .background(MewFocusColor.coral.opacity(0.12))
+                    .clipShape(Circle())
+
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("설정")
+                        .font(.system(size: 20, weight: .bold))
+                        .foregroundStyle(MewFocusColor.textPrimary)
+                    Text("메뉴바 팝오버 크기를 조절합니다.")
+                        .font(.system(size: 13, weight: .bold))
+                        .foregroundStyle(MewFocusColor.textSecondary)
+                }
+
+                Spacer()
+            }
+
+            VStack(alignment: .leading, spacing: 12) {
+                HStack(alignment: .firstTextBaseline) {
+                    Text("화면 크기")
+                        .font(.system(size: 14, weight: .bold))
+                        .foregroundStyle(MewFocusColor.textPrimary)
+
+                    Spacer()
+
+                    Text(scaleText)
+                        .font(.system(size: 13, weight: .bold, design: .rounded))
+                        .foregroundStyle(MewFocusColor.textSecondary)
+                        .monospacedDigit()
+                }
+
+                Slider(
+                    value: $displaySettings.scale,
+                    in: FocusPopoverDisplaySettings.minimumScale...FocusPopoverDisplaySettings.maximumScale,
+                    step: 0.02
+                )
+                .tint(MewFocusColor.coral)
+
+                HStack {
+                    Text("작게")
+                    Spacer()
+                    Text("크게")
+                }
+                .font(.system(size: 11, weight: .bold))
+                .foregroundStyle(MewFocusColor.textTertiary)
+
+                Button("기본 크기로") {
+                    displaySettings.resetScale()
+                }
+                .buttonStyle(.plain)
+                .font(.system(size: 13, weight: .bold))
+                .foregroundStyle(MewFocusColor.coral)
+                .padding(.top, 2)
+            }
+            .padding(16)
+            .background(.white.opacity(0.88))
+            .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).stroke(MewFocusColor.divider.opacity(0.85)))
+        }
+        .padding(22)
+        .frame(width: 340)
+        .background(MewFocusColor.surface)
+    }
+
+    private var scaleText: String {
+        "\(Int((displaySettings.scale * 100).rounded()))%"
     }
 }
 

@@ -1,4 +1,5 @@
 import AppKit
+import Combine
 import MewFocusData
 import MewFocusDesign
 import MewFocusDomain
@@ -11,11 +12,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let popover = NSPopover()
     private let snapshotRepository = AppGroupFocusSessionSnapshotRepository()
     private let statisticsRepository: any FocusStatisticsRepository = AppDelegate.makeStatisticsRepository()
+    private let displaySettings = FocusPopoverDisplaySettings(scale: AppDelegate.loadPopoverScale())
+    private var cancellables = Set<AnyCancellable>()
     private var animationTimer: Timer?
     private var currentMenuBarFrameIndex = 0
     private let menuBarIconSize = NSSize(width: 22, height: 22)
-    private let popoverBaseSize = NSSize(width: 530, height: 842)
-    private let popoverScale: CGFloat = 0.62
+    private let popoverBaseSize = NSSize(width: 530, height: 920)
+    private static let popoverScaleKey = "MewFocusPopoverScale"
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         guard ensureSingleInstance() else { return }
@@ -31,23 +34,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         startMenuBarCatAnimation()
 
         popover.behavior = .transient
-        let scaledPopoverSize = NSSize(
-            width: popoverBaseSize.width * popoverScale,
-            height: popoverBaseSize.height * popoverScale
-        )
-        popover.contentSize = scaledPopoverSize
+        popover.contentSize = scaledPopoverSize(for: displaySettings.scale)
         popover.contentViewController = NSHostingController(
-            rootView: FocusPopoverView(
+            rootView: ScaledFocusPopoverRoot(
+                baseSize: popoverBaseSize,
                 snapshotRepository: snapshotRepository,
                 statisticsRepository: statisticsRepository,
+                displaySettings: displaySettings,
                 reloadWidgetTimelines: {
                     WidgetCenter.shared.reloadTimelines(ofKind: "MewFocusCatWidget")
                 }
             )
-            .frame(width: popoverBaseSize.width, height: popoverBaseSize.height, alignment: .topLeading)
-            .scaleEffect(popoverScale, anchor: .topLeading)
-            .frame(width: scaledPopoverSize.width, height: scaledPopoverSize.height, alignment: .topLeading)
         )
+        bindPopoverDisplaySettings()
     }
 
     func applicationWillTerminate(_ notification: Notification) {
@@ -95,6 +94,45 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private static func makeStatisticsRepository() -> any FocusStatisticsRepository {
         (try? SwiftDataFocusStatisticsRepository()) ?? InMemoryFocusStatisticsRepository()
+    }
+
+    private static func loadPopoverScale() -> Double {
+        let storedScale = UserDefaults.standard.double(forKey: popoverScaleKey)
+        guard storedScale > 0 else { return FocusPopoverDisplaySettings.defaultScale }
+
+        return min(
+            max(storedScale, FocusPopoverDisplaySettings.minimumScale),
+            FocusPopoverDisplaySettings.maximumScale
+        )
+    }
+
+    private func bindPopoverDisplaySettings() {
+        displaySettings.$scale
+            .removeDuplicates()
+            .sink { [weak self] scale in
+                guard let self else { return }
+
+                let clampedScale = min(
+                    max(scale, FocusPopoverDisplaySettings.minimumScale),
+                    FocusPopoverDisplaySettings.maximumScale
+                )
+
+                if clampedScale != scale {
+                    displaySettings.scale = clampedScale
+                    return
+                }
+
+                UserDefaults.standard.set(clampedScale, forKey: Self.popoverScaleKey)
+                popover.contentSize = scaledPopoverSize(for: clampedScale)
+            }
+            .store(in: &cancellables)
+    }
+
+    private func scaledPopoverSize(for scale: Double) -> NSSize {
+        NSSize(
+            width: popoverBaseSize.width * CGFloat(scale),
+            height: popoverBaseSize.height * CGFloat(scale)
+        )
     }
 
     private func startMenuBarCatAnimation() {
@@ -183,5 +221,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 height: cropMaxY - cropY + 1
             )
         )
+    }
+}
+
+private struct ScaledFocusPopoverRoot: View {
+    let baseSize: NSSize
+    let snapshotRepository: FocusSessionSnapshotRepository?
+    let statisticsRepository: any FocusStatisticsRepository
+    @ObservedObject var displaySettings: FocusPopoverDisplaySettings
+    let reloadWidgetTimelines: () -> Void
+
+    var body: some View {
+        let scaledSize = CGSize(
+            width: baseSize.width * CGFloat(displaySettings.scale),
+            height: baseSize.height * CGFloat(displaySettings.scale)
+        )
+
+        FocusPopoverView(
+            snapshotRepository: snapshotRepository,
+            statisticsRepository: statisticsRepository,
+            displaySettings: displaySettings,
+            reloadWidgetTimelines: reloadWidgetTimelines
+        )
+        .frame(width: baseSize.width, height: baseSize.height, alignment: .topLeading)
+        .scaleEffect(displaySettings.scale, anchor: .topLeading)
+        .frame(width: scaledSize.width, height: scaledSize.height, alignment: .topLeading)
     }
 }
