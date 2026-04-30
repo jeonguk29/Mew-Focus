@@ -14,6 +14,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var animationTimer: Timer?
     private var currentMenuBarFrameIndex = 0
     private let menuBarIconSize = NSSize(width: 22, height: 22)
+    private let popoverBaseSize = NSSize(width: 530, height: 842)
+    private let popoverScale: CGFloat = 0.62
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         guard ensureSingleInstance() else { return }
@@ -29,7 +31,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         startMenuBarCatAnimation()
 
         popover.behavior = .transient
-        popover.contentSize = NSSize(width: 530, height: 842)
+        let scaledPopoverSize = NSSize(
+            width: popoverBaseSize.width * popoverScale,
+            height: popoverBaseSize.height * popoverScale
+        )
+        popover.contentSize = scaledPopoverSize
         popover.contentViewController = NSHostingController(
             rootView: FocusPopoverView(
                 snapshotRepository: snapshotRepository,
@@ -38,6 +44,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     WidgetCenter.shared.reloadTimelines(ofKind: "MewFocusCatWidget")
                 }
             )
+            .frame(width: popoverBaseSize.width, height: popoverBaseSize.height, alignment: .topLeading)
+            .scaleEffect(popoverScale, anchor: .topLeading)
+            .frame(width: scaledPopoverSize.width, height: scaledPopoverSize.height, alignment: .topLeading)
         )
     }
 
