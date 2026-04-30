@@ -1,6 +1,7 @@
 import AppKit
 import MewFocusData
 import MewFocusDesign
+import MewFocusDomain
 import MewFocusPresentation
 import SwiftUI
 import WidgetKit
@@ -9,6 +10,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusItem: NSStatusItem?
     private let popover = NSPopover()
     private let snapshotRepository = AppGroupFocusSessionSnapshotRepository()
+    private let statisticsRepository: any FocusStatisticsRepository = AppDelegate.makeStatisticsRepository()
     private var animationTimer: Timer?
     private var currentMenuBarFrameIndex = 0
     private let menuBarIconSize = NSSize(width: 22, height: 22)
@@ -27,10 +29,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         startMenuBarCatAnimation()
 
         popover.behavior = .transient
-        popover.contentSize = NSSize(width: 530, height: 660)
+        popover.contentSize = NSSize(width: 530, height: 842)
         popover.contentViewController = NSHostingController(
             rootView: FocusPopoverView(
                 snapshotRepository: snapshotRepository,
+                statisticsRepository: statisticsRepository,
                 reloadWidgetTimelines: {
                     WidgetCenter.shared.reloadTimelines(ofKind: "MewFocusCatWidget")
                 }
@@ -79,6 +82,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         return true
+    }
+
+    private static func makeStatisticsRepository() -> any FocusStatisticsRepository {
+        (try? SwiftDataFocusStatisticsRepository()) ?? InMemoryFocusStatisticsRepository()
     }
 
     private func startMenuBarCatAnimation() {
