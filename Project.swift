@@ -121,6 +121,18 @@ let project = Project(
             dependencies: [
                 .target(name: "MewFocusDomain")
             ]
+        ),
+        .target(
+            name: "MewFocusDataTests",
+            destinations: .macOS,
+            product: .unitTests,
+            bundleId: "com.mashup.MewFocus.DataTests",
+            deploymentTargets: .macOS("14.0"),
+            sources: ["Tests/MewFocusDataTests/**"],
+            dependencies: [
+                .target(name: "MewFocusData"),
+                .target(name: "MewFocusDomain")
+            ]
         )
     ],
     schemes: [
@@ -166,6 +178,12 @@ let project = Project(
             shared: true,
             buildAction: .buildAction(targets: ["MewFocusDomain"]),
             testAction: .targets(["MewFocusDomainTests"])
+        ),
+        .scheme(
+            name: "MewFocusData",
+            shared: true,
+            buildAction: .buildAction(targets: ["MewFocusData"]),
+            testAction: .targets(["MewFocusDataTests"])
         )
     ]
 )

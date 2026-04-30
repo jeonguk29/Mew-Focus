@@ -13,3 +13,15 @@ public struct SessionRecord: Equatable, Identifiable, Sendable {
         self.completedAt = completedAt
     }
 }
+
+public struct DailyFocusSummary: Equatable, Identifiable, Sendable {
+    public let date: Date
+    public let duration: TimeInterval
+
+    public var id: Date { date }
+
+    public init(date: Date, duration: TimeInterval) {
+        self.date = date
+        self.duration = duration
+    }
+}
