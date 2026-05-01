@@ -8,12 +8,14 @@ final class FocusSessionRecordModel {
     var title: String
     var duration: TimeInterval
     var completedAt: Date
+    var kindRawValue: String = SessionRecordKind.focus.rawValue
 
-    init(id: UUID, title: String, duration: TimeInterval, completedAt: Date) {
+    init(id: UUID, title: String, duration: TimeInterval, completedAt: Date, kindRawValue: String = SessionRecordKind.focus.rawValue) {
         self.id = id
         self.title = title
         self.duration = duration
         self.completedAt = completedAt
+        self.kindRawValue = kindRawValue
     }
 
     convenience init(record: SessionRecord) {
@@ -21,7 +23,8 @@ final class FocusSessionRecordModel {
             id: record.id,
             title: record.title,
             duration: record.duration,
-            completedAt: record.completedAt
+            completedAt: record.completedAt,
+            kindRawValue: record.kind.rawValue
         )
     }
 
@@ -30,7 +33,8 @@ final class FocusSessionRecordModel {
             id: id,
             title: title,
             duration: duration,
-            completedAt: completedAt
+            completedAt: completedAt,
+            kind: SessionRecordKind(rawValue: kindRawValue) ?? .focus
         )
     }
 }
@@ -106,8 +110,12 @@ public actor SwiftDataFocusStatisticsRepository: FocusStatisticsRepository {
 
     private func focusDuration(from startDate: Date, to endDate: Date) throws -> TimeInterval {
         let context = ModelContext(container)
+        let focusKindRawValue = SessionRecordKind.focus.rawValue
         let predicate = #Predicate<FocusSessionRecordModel> { record in
-            record.completedAt >= startDate && record.completedAt < endDate
+            record.completedAt >= startDate
+                && record.completedAt < endDate
+                && record.kindRawValue == focusKindRawValue
+                && record.title != "휴식"
         }
         let descriptor = FetchDescriptor<FocusSessionRecordModel>(predicate: predicate)
         return try context.fetch(descriptor).reduce(0) { $0 + $1.duration }

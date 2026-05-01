@@ -27,6 +27,8 @@ public actor InMemoryFocusStatisticsRepository: FocusStatisticsRepository {
         let calendar = Calendar.current
         return records
             .filter { calendar.isDate($0.completedAt, inSameDayAs: now) }
+            .filter { $0.kind == .focus }
+            .filter { $0.title != "휴식" }
             .reduce(0) { $0 + $1.duration }
     }
 
@@ -39,6 +41,8 @@ public actor InMemoryFocusStatisticsRepository: FocusStatisticsRepository {
             guard let date = calendar.date(byAdding: .day, value: -offset, to: today) else { return nil }
             let duration = records
                 .filter { calendar.isDate($0.completedAt, inSameDayAs: date) }
+                .filter { $0.kind == .focus }
+                .filter { $0.title != "휴식" }
                 .reduce(0) { $0 + $1.duration }
             return DailyFocusSummary(date: date, duration: duration)
         }

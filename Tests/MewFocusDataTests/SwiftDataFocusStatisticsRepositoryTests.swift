@@ -93,16 +93,61 @@ final class SwiftDataFocusStatisticsRepositoryTests: XCTestCase {
         XCTAssertEqual(sessions.map(\.title), ["afternoon", "morning"])
     }
 
+    func testBreakSessionsAreListedButExcludedFromFocusStatistics() async throws {
+        let repository = try SwiftDataFocusStatisticsRepository(isStoredInMemoryOnly: true)
+        let calendar = Calendar.current
+        let now = try XCTUnwrap(calendar.date(from: DateComponents(year: 2026, month: 4, day: 30, hour: 14)))
+        let focusCompletedAt = now.addingTimeInterval(-120)
+        let breakCompletedAt = now
+
+        try await repository.saveSession(record(duration: 25 * 60, completedAt: focusCompletedAt))
+        try await repository.saveSession(
+            record(
+                title: "휴식",
+                duration: 10 * 60,
+                completedAt: breakCompletedAt,
+                kind: .shortBreak
+            )
+        )
+
+        let todayDuration = try await repository.todayFocusDuration(now: now)
+        let summaries = try await repository.dailyFocusSummaries(days: 1, now: now)
+        let recent = try await repository.recentSessions(limit: 2)
+        let daySessions = try await repository.sessions(on: now)
+
+        XCTAssertEqual(todayDuration, 25 * 60)
+        XCTAssertEqual(summaries.first?.duration, 25 * 60)
+        XCTAssertEqual(recent.map(\.kind), [.shortBreak, .focus])
+        XCTAssertEqual(daySessions.map(\.kind), [.shortBreak, .focus])
+        XCTAssertTrue(calendar.isDate(daySessions[0].completedAt, inSameDayAs: now))
+    }
+
+    func testLegacyBreakTitleIsExcludedFromFocusStatistics() async throws {
+        let repository = try SwiftDataFocusStatisticsRepository(isStoredInMemoryOnly: true)
+        let now = try XCTUnwrap(Calendar.current.date(from: DateComponents(year: 2026, month: 4, day: 30, hour: 14)))
+
+        try await repository.saveSession(record(duration: 25 * 60, completedAt: now))
+        try await repository.saveSession(record(title: "휴식", duration: 10 * 60, completedAt: now.addingTimeInterval(1)))
+
+        let todayDuration = try await repository.todayFocusDuration(now: now)
+        let recent = try await repository.recentSessions(limit: 2)
+
+        XCTAssertEqual(todayDuration, 25 * 60)
+        XCTAssertEqual(recent.map(\.title), ["휴식", "집중"])
+    }
+
     private func record(
         title: String = "집중",
         duration: TimeInterval,
-        completedAt: Date
+        completedAt: Date,
+        kind: SessionRecordKind = .focus
     ) -> SessionRecord {
         SessionRecord(
             id: UUID(),
             title: title,
             duration: duration,
-            completedAt: completedAt
+            completedAt: completedAt,
+            kind: kind
         )
     }
 }
