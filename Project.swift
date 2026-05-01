@@ -11,7 +11,8 @@ let project = Project(
             "CODE_SIGN_STYLE": "Automatic",
             "DEVELOPMENT_TEAM": "9S8KMMC3YH",
             "SWIFT_VERSION": "5.9",
-            "MACOSX_DEPLOYMENT_TARGET": "14.0"
+            "MACOSX_DEPLOYMENT_TARGET": "14.0",
+            "ENABLE_DEBUG_DYLIB": "NO"
         ]
     ),
     targets: [
@@ -160,11 +161,30 @@ let project = Project(
                           exit 0
                         fi
 
+                        OLD_APPEX="${DEST_PATH}/Contents/PlugIns/MewFocusWidget.appex"
+
+                        # Kill existing instances so the new build is loaded
+                        killall "MewFocusApp" 2>/dev/null || true
+                        pkill -f "MewFocusWidget" 2>/dev/null || true
+
+                        # Unregister the old widget extension so cached previews are dropped
+                        if [ -d "${OLD_APPEX}" ]; then
+                          pluginkit -r "${OLD_APPEX}" 2>/dev/null || true
+                        fi
+
                         rm -rf "${DEST_PATH}"
                         ditto "${APP_PATH}" "${DEST_PATH}"
                         touch "${DEST_PATH}"
+
+                        # Wipe chronod descriptor/snapshot cache, then restart it
+                        defaults delete com.apple.chronod 2>/dev/null || true
+                        killall chronod 2>/dev/null || true
+
+                        # Re-register the new widget extension
+                        pluginkit -a "${DEST_PATH}/Contents/PlugIns/MewFocusWidget.appex" 2>/dev/null || true
+
                         open -gj "${DEST_PATH}" || true
-                        echo "Installed and launched ${DEST_PATH} for WidgetKit discovery."
+                        echo "Reinstalled ${DEST_PATH}; chronod and widget caches purged."
                         """,
                         target: .target("MewFocusApp")
                     )
