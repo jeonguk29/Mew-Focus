@@ -24,7 +24,9 @@ let project = Project(
             deploymentTargets: .macOS("14.0"),
             infoPlist: .extendingDefault(
                 with: [
+                    "CFBundleName": "Mew Focus",
                     "CFBundleDisplayName": "Mew Focus",
+                    "LSApplicationCategoryType": "public.app-category.productivity",
                     "CFBundleURLTypes": [
                         [
                             "CFBundleURLName": "com.mashup.MewFocus",
@@ -53,6 +55,7 @@ let project = Project(
             deploymentTargets: .macOS("14.0"),
             infoPlist: .extendingDefault(
                 with: [
+                    "CFBundleName": "Mew Focus",
                     "CFBundleDisplayName": "Mew Focus",
                     "NSExtension": [
                         "NSExtensionAttributes": [
@@ -63,6 +66,7 @@ let project = Project(
                 ]
             ),
             sources: ["Sources/MewFocusWidget/**"],
+            resources: ["Resources/MewFocusWidget/**"],
             entitlements: .file(path: "Entitlements/MewFocusWidget.entitlements"),
             dependencies: [
                 .target(name: "MewFocusDomain"),
@@ -147,6 +151,11 @@ let project = Project(
                         title: "Install and Launch /Applications App for WidgetKit",
                         scriptText: """
                         set -e
+
+                        if [ "${CONFIGURATION}" != "Debug" ]; then
+                          echo "Skipping /Applications install outside Debug configuration."
+                          exit 0
+                        fi
 
                         if [ "${CODE_SIGNING_ALLOWED:-YES}" = "NO" ]; then
                           echo "Skipping /Applications install because code signing is disabled."
