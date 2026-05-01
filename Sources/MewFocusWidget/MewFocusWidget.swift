@@ -15,12 +15,13 @@ struct FocusStatisticsProvider: TimelineProvider {
     private let statisticsSnapshotRepository = AppGroupFocusStatisticsSnapshotRepository()
     private let fallbackTimerSnapshot = FocusSessionSnapshot(
         session: FocusSession(
-            preset: .twentyFiveMinutes,
-            duration: 25 * 60,
+            preset: .thirtyMinutes,
+            duration: 30 * 60,
             remainingTime: 22 * 60 + 14,
             state: .running
         ),
-        updatedAt: .now
+        updatedAt: .now,
+        mode: .focus
     )
     private let fallbackSnapshot = FocusStatisticsSnapshot(
         todayFocusDuration: 2 * 3600 + 45 * 60,
@@ -93,7 +94,7 @@ struct MewFocusWidgetEntryView: View {
                 catIcon(size: 42)
 
                 VStack(alignment: .leading, spacing: 0) {
-                    Text("Focus Dial")
+                    Text("Mew Focus")
                         .font(.system(size: 15, weight: .bold))
                         .foregroundStyle(MewFocusColor.textPrimary)
                         .lineLimit(1)
@@ -157,7 +158,7 @@ struct MewFocusWidgetEntryView: View {
     }
 
     private func largeWidget(size: CGSize) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: 16) {
             header(iconSize: 58, titleSize: 25, subtitleSize: 14)
 
             HStack(alignment: .bottom, spacing: 10) {
@@ -172,8 +173,8 @@ struct MewFocusWidgetEntryView: View {
                     .allowsHitTesting(false)
             }
             .padding(.horizontal, 16)
-            .padding(.vertical, 14)
-            .background(filledCardBackground(cornerRadius: 20, tint: MewFocusColor.coral))
+            .padding(.vertical, 12)
+            .background(filledCardBackground(cornerRadius: 20, tint: activeTintColor))
 
             HStack(alignment: .top, spacing: 10) {
                 statTile(
@@ -186,11 +187,12 @@ struct MewFocusWidgetEntryView: View {
 
                 recentTile(limit: 4, isLarge: true)
             }
+            .frame(height: 96)
             .frame(maxHeight: .infinity, alignment: .top)
         }
         .padding(.top, 18)
         .padding(.horizontal, 18)
-        .padding(.bottom, 30)
+        .padding(.bottom, 48)
         .frame(width: size.width, height: size.height, alignment: .topLeading)
     }
 
@@ -244,7 +246,7 @@ struct MewFocusWidgetEntryView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .padding(.horizontal, 14)
         .padding(.vertical, 10)
-        .background(filledCardBackground(cornerRadius: 18, tint: MewFocusColor.coral))
+        .background(filledCardBackground(cornerRadius: 18, tint: activeTintColor))
     }
 
     private func statTile(
@@ -255,7 +257,7 @@ struct MewFocusWidgetEntryView: View {
         isLarge: Bool = false,
         compact: Bool = false
     ) -> some View {
-        VStack(alignment: .leading, spacing: isLarge ? 8 : 5) {
+        VStack(alignment: .leading, spacing: isLarge ? 6 : 5) {
             HStack(spacing: 7) {
                 Image(systemName: systemImage)
                     .font(.system(size: isLarge ? 15 : 12, weight: .bold))
@@ -270,7 +272,7 @@ struct MewFocusWidgetEntryView: View {
             .lineLimit(1)
 
             Text(compact ? compactDurationText(entry.snapshot.todayFocusDuration) : value)
-                .font(.system(size: isLarge ? 25 : (compact ? 16 : 18), weight: .bold, design: .rounded))
+                .font(.system(size: isLarge ? 23 : (compact ? 16 : 18), weight: .bold, design: .rounded))
                 .foregroundStyle(MewFocusColor.textPrimary)
                 .monospacedDigit()
                 .lineLimit(2)
@@ -278,14 +280,14 @@ struct MewFocusWidgetEntryView: View {
 
             if isLarge {
                 Text("차곡차곡 쌓인 기록")
-                    .font(.system(size: 11, weight: .bold))
+                    .font(.system(size: 10, weight: .bold))
                     .foregroundStyle(MewFocusColor.textTertiary)
                     .lineLimit(1)
                     .minimumScaleFactor(0.72)
             }
         }
-        .frame(maxWidth: .infinity, minHeight: isLarge ? 98 : (compact ? 84 : 68), alignment: .topLeading)
-        .padding(isLarge ? 13 : (compact ? 9 : 10))
+        .frame(maxWidth: .infinity, minHeight: isLarge ? 88 : (compact ? 84 : 68), alignment: .topLeading)
+        .padding(isLarge ? 11 : (compact ? 9 : 10))
         .background(outlinedCardBackground(cornerRadius: isLarge ? 18 : 14))
     }
 
@@ -332,7 +334,7 @@ struct MewFocusWidgetEntryView: View {
     }
 
     private func recentTile(limit: Int, isLarge: Bool = false, compact: Bool = false) -> some View {
-        VStack(alignment: .leading, spacing: isLarge ? 8 : 5) {
+        VStack(alignment: .leading, spacing: isLarge ? 6 : 5) {
             HStack(spacing: 7) {
                 Image(systemName: "clock.badge.checkmark")
                     .font(.system(size: isLarge ? 15 : 12, weight: .bold))
@@ -353,8 +355,8 @@ struct MewFocusWidgetEntryView: View {
                 }
             }
         }
-        .frame(maxWidth: .infinity, minHeight: isLarge ? 98 : (compact ? 56 : 68), alignment: .topLeading)
-        .padding(isLarge ? 13 : (compact ? 9 : 10))
+        .frame(maxWidth: .infinity, minHeight: isLarge ? 88 : (compact ? 56 : 68), alignment: .topLeading)
+        .padding(isLarge ? 11 : (compact ? 9 : 10))
         .background(outlinedCardBackground(cornerRadius: isLarge ? 18 : 14))
     }
 
@@ -403,7 +405,7 @@ struct MewFocusWidgetEntryView: View {
             catIcon(size: iconSize)
 
             VStack(alignment: .leading, spacing: 2) {
-                Text("Focus Dial")
+                Text("Mew Focus")
                     .font(.system(size: titleSize, weight: .bold))
                     .foregroundStyle(MewFocusColor.textPrimary)
                     .lineLimit(1)
@@ -589,10 +591,10 @@ struct MewFocusWidgetEntryView: View {
 
     private var statusTitle: String {
         switch resolvedSession.state {
-        case .idle: "대기 중"
-        case .running: "집중 중"
+        case .idle: isShortBreakMode ? "휴식 대기" : "대기 중"
+        case .running: isShortBreakMode ? "휴식 중" : "집중 중"
         case .paused: "일시정지"
-        case .completed: "완료"
+        case .completed: isShortBreakMode ? "휴식 완료" : "완료"
         }
     }
 
@@ -601,13 +603,21 @@ struct MewFocusWidgetEntryView: View {
         case .idle, .paused:
             MewFocusColor.textTertiary
         case .running, .completed:
-            MewFocusColor.coral
+            activeTintColor
         }
     }
 
     private func sessionDescription(for session: FocusSession) -> String {
         let title = session.preset?.title ?? durationText(session.duration)
-        return "\(title) 세션"
+        return isShortBreakMode ? "\(title) 휴식" : "\(title) 세션"
+    }
+
+    private var isShortBreakMode: Bool {
+        entry.timerSnapshot?.mode == .shortBreak
+    }
+
+    private var activeTintColor: Color {
+        isShortBreakMode ? MewFocusColor.mint : MewFocusColor.coral
     }
 
     private func timeText(for remainingTime: TimeInterval) -> String {
@@ -668,12 +678,13 @@ struct MewFocusWidgetBundle: WidgetBundle {
         date: .now,
         timerSnapshot: FocusSessionSnapshot(
             session: FocusSession(
-                preset: .twentyFiveMinutes,
-                duration: 25 * 60,
+                preset: .thirtyMinutes,
+                duration: 30 * 60,
                 remainingTime: 22 * 60 + 14,
                 state: .running
             ),
-            updatedAt: .now
+            updatedAt: .now,
+            mode: .focus
         ),
         snapshot: FocusStatisticsSnapshot(
             todayFocusDuration: 2 * 3600 + 45 * 60,
@@ -694,12 +705,13 @@ struct MewFocusWidgetBundle: WidgetBundle {
         date: .now,
         timerSnapshot: FocusSessionSnapshot(
             session: FocusSession(
-                preset: .twentyFiveMinutes,
-                duration: 25 * 60,
+                preset: .thirtyMinutes,
+                duration: 30 * 60,
                 remainingTime: 22 * 60 + 14,
                 state: .running
             ),
-            updatedAt: .now
+            updatedAt: .now,
+            mode: .focus
         ),
         snapshot: FocusStatisticsSnapshot(
             todayFocusDuration: 2 * 3600 + 45 * 60,

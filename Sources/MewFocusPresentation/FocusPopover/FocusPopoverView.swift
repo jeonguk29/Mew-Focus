@@ -45,7 +45,7 @@ private enum FocusPresetStorage {
         let filledDurations = Array((durations + defaultDurations).prefix(defaultDurations.count))
         return filledDurations.map { duration in
             if duration <= 10 {
-                return 10
+                return defaultDurations.first ?? 5 * 60
             }
 
             let minutes = min(max(Int((duration / 60).rounded()), 1), 180)
@@ -177,7 +177,7 @@ public struct FocusPopoverView: View {
                 .frame(width: 58, height: 58)
 
             VStack(alignment: .leading, spacing: 2) {
-                Text("Focus Dial")
+                Text("Mew Focus")
                     .font(.system(size: 30, weight: .bold))
                     .foregroundStyle(MewFocusColor.textPrimary)
                 Text("집중에 몰입하는 시간")
@@ -659,11 +659,7 @@ public struct FocusPopoverView: View {
     }
 
     private func presetTitle(for duration: TimeInterval) -> String {
-        if duration <= 10 {
-            return "10초"
-        }
-
-        return "\(Int(duration / 60))분"
+        "\(max(Int(duration / 60), 1))분"
     }
 
     private func restoreSnapshot() {
@@ -672,13 +668,18 @@ public struct FocusPopoverView: View {
             return
         }
 
+        timerMode = snapshot.mode == .shortBreak ? .shortBreak : .focus
         session = resolvedSession(from: snapshot, now: Date())
         lastTickDate = session.state == .running ? Date() : nil
     }
 
     private func saveSnapshot(now: Date = Date()) {
         snapshotRepository?.saveSnapshot(
-            FocusSessionSnapshot(session: session, updatedAt: now)
+            FocusSessionSnapshot(
+                session: session,
+                updatedAt: now,
+                mode: timerMode == .shortBreak ? .shortBreak : .focus
+            )
         )
         reloadWidgetTimelines()
     }
@@ -1219,14 +1220,15 @@ private struct FocusPresetSettingsView: View {
                 applyPresetEdits()
             } label: {
                 Label("수정하기", systemImage: "checkmark")
-                    .frame(maxWidth: .infinity)
+                    .frame(maxWidth: .infinity, minHeight: 54)
+                    .contentShape(Capsule())
             }
             .buttonStyle(.plain)
             .font(.system(size: 14, weight: .bold))
             .foregroundStyle(.white)
-            .padding(.vertical, 12)
             .background(MewFocusColor.coral)
             .clipShape(Capsule())
+            .contentShape(Capsule())
         }
         .padding(22)
         .frame(width: 390)
@@ -1269,7 +1271,7 @@ private struct FocusPresetSettingsView: View {
         }
 
         minuteTexts = durationsForEditing.map { duration in
-            duration <= 10 ? "" : "\(Int(duration / 60))"
+            "\(max(Int(duration / 60), 1))"
         }
     }
 
@@ -1283,7 +1285,7 @@ private struct FocusPresetSettingsView: View {
             return TimeInterval(min(max(minutes, 1), 180) * 60)
         }
         durations = FocusPresetStorage.normalizedDurations(nextDurations)
-        minuteTexts = durations.map { $0 <= 10 ? "" : "\(Int($0 / 60))" }
+        minuteTexts = durations.map { "\(max(Int($0 / 60), 1))" }
     }
 
     private var durationsForEditing: [TimeInterval] {
@@ -1349,11 +1351,7 @@ private struct FocusPresetSettingRow: View {
     }
 
     private var durationText: String {
-        if duration <= 10 {
-            return "10초"
-        }
-
-        return "\(Int(duration / 60))분"
+        "\(max(Int(duration / 60), 1))분"
     }
 
     private func sanitizedMinuteText(_ value: String) -> String {

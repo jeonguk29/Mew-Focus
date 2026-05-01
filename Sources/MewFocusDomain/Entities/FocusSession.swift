@@ -7,9 +7,9 @@ public struct FocusSession: Codable, Equatable, Sendable {
     public var state: TimerState
 
     public init(
-        preset: FocusPreset? = .twentyFiveMinutes,
-        duration: TimeInterval = FocusPreset.twentyFiveMinutes.duration,
-        remainingTime: TimeInterval = FocusPreset.twentyFiveMinutes.duration,
+        preset: FocusPreset? = .thirtyMinutes,
+        duration: TimeInterval = FocusPreset.thirtyMinutes.duration,
+        remainingTime: TimeInterval = FocusPreset.thirtyMinutes.duration,
         state: TimerState = .idle
     ) {
         self.preset = preset
