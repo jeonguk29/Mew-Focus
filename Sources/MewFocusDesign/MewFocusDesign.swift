@@ -3,6 +3,8 @@ import SwiftUI
 public enum MewFocusColor {
     public static let coral = Color(red: 1.0, green: 0.38, blue: 0.27)
     public static let coralLight = Color(red: 1.0, green: 0.47, blue: 0.35)
+    public static let mint = Color(red: 0.16, green: 0.72, blue: 0.48)
+    public static let mintLight = Color(red: 0.30, green: 0.82, blue: 0.58)
     public static let surface = Color(red: 0.99, green: 0.99, blue: 0.98)
     public static let textPrimary = Color(red: 0.12, green: 0.12, blue: 0.13)
     public static let textSecondary = Color(red: 0.48, green: 0.48, blue: 0.50)
@@ -12,7 +14,19 @@ public enum MewFocusColor {
 }
 
 public struct PrimaryPillButtonStyle: ButtonStyle {
-    public init() {}
+    private let leadingColor: Color
+    private let trailingColor: Color
+    private let shadowColor: Color
+
+    public init(
+        leadingColor: Color = MewFocusColor.coralLight,
+        trailingColor: Color = MewFocusColor.coral,
+        shadowColor: Color = MewFocusColor.coral
+    ) {
+        self.leadingColor = leadingColor
+        self.trailingColor = trailingColor
+        self.shadowColor = shadowColor
+    }
 
     public func makeBody(configuration: Configuration) -> some View {
         configuration.label
@@ -23,15 +37,15 @@ public struct PrimaryPillButtonStyle: ButtonStyle {
             .background(
                 LinearGradient(
                     colors: [
-                        MewFocusColor.coralLight.opacity(configuration.isPressed ? 0.88 : 1),
-                        MewFocusColor.coral.opacity(configuration.isPressed ? 0.88 : 1)
+                        leadingColor.opacity(configuration.isPressed ? 0.88 : 1),
+                        trailingColor.opacity(configuration.isPressed ? 0.88 : 1)
                     ],
                     startPoint: .topLeading,
                     endPoint: .bottomTrailing
                 )
             )
             .clipShape(Capsule())
-            .shadow(color: MewFocusColor.coral.opacity(0.22), radius: 12, x: 0, y: 8)
+            .shadow(color: shadowColor.opacity(0.22), radius: 12, x: 0, y: 8)
     }
 }
 

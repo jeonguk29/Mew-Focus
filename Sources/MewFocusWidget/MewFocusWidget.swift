@@ -1,257 +1,594 @@
+import MewFocusData
 import MewFocusDesign
 import MewFocusDomain
-import MewFocusData
 import SwiftUI
 import WidgetKit
 
-struct FocusTimerEntry: TimelineEntry {
+struct FocusStatisticsEntry: TimelineEntry {
     let date: Date
-    let snapshot: FocusSessionSnapshot
+    let timerSnapshot: FocusSessionSnapshot?
+    let snapshot: FocusStatisticsSnapshot
 }
 
-struct FocusTimerProvider: TimelineProvider {
-    private let snapshotRepository = AppGroupFocusSessionSnapshotRepository()
+struct FocusStatisticsProvider: TimelineProvider {
+    private let timerSnapshotRepository = AppGroupFocusSessionSnapshotRepository()
+    private let statisticsSnapshotRepository = AppGroupFocusStatisticsSnapshotRepository()
+    private let fallbackTimerSnapshot = FocusSessionSnapshot(
+        session: FocusSession(
+            preset: .twentyFiveMinutes,
+            duration: 25 * 60,
+            remainingTime: 22 * 60 + 14,
+            state: .running
+        ),
+        updatedAt: .now
+    )
+    private let fallbackSnapshot = FocusStatisticsSnapshot(
+        todayFocusDuration: 2 * 3600 + 45 * 60,
+        recentSessions: [
+            SessionRecord(title: "집중", duration: 25 * 60, completedAt: .now.addingTimeInterval(-18 * 60), kind: .focus),
+            SessionRecord(title: "휴식", duration: 10 * 60, completedAt: .now.addingTimeInterval(-48 * 60), kind: .shortBreak),
+            SessionRecord(title: "집중", duration: 50 * 60, completedAt: .now.addingTimeInterval(-82 * 60), kind: .focus)
+        ],
+        updatedAt: .now
+    )
 
-    func placeholder(in context: Context) -> FocusTimerEntry {
-        FocusTimerEntry(
+    func placeholder(in context: Context) -> FocusStatisticsEntry {
+        FocusStatisticsEntry(
             date: .now,
-            snapshot: FocusSessionSnapshot(
-                session: FocusSession(
-                    preset: .twentyFiveMinutes,
-                    duration: 25 * 60,
-                    remainingTime: 19 * 60 + 38,
-                    state: .running
-                ),
-                updatedAt: .now
+            timerSnapshot: fallbackTimerSnapshot,
+            snapshot: fallbackSnapshot
+        )
+    }
+
+    func getSnapshot(in context: Context, completion: @escaping (FocusStatisticsEntry) -> Void) {
+        completion(entry())
+    }
+
+    func getTimeline(in context: Context, completion: @escaping (Timeline<FocusStatisticsEntry>) -> Void) {
+        completion(
+            Timeline(
+                entries: [entry()],
+                policy: .after(.now.addingTimeInterval(15 * 60))
             )
         )
     }
 
-    func getSnapshot(in context: Context, completion: @escaping (FocusTimerEntry) -> Void) {
-        completion(placeholder(in: context))
-    }
-
-    func getTimeline(in context: Context, completion: @escaping (Timeline<FocusTimerEntry>) -> Void) {
-        let now = Date()
-        let snapshot = snapshotRepository.loadSnapshot() ?? placeholder(in: context).snapshot
-        let entry = FocusTimerEntry(date: now, snapshot: snapshot)
-        completion(Timeline(entries: [entry], policy: .after(.now.addingTimeInterval(60))))
+    private func entry() -> FocusStatisticsEntry {
+        FocusStatisticsEntry(
+            date: .now,
+            timerSnapshot: timerSnapshotRepository.loadSnapshot() ?? fallbackTimerSnapshot,
+            snapshot: statisticsSnapshotRepository.loadSnapshot() ?? fallbackSnapshot
+        )
     }
 }
 
 struct MewFocusWidgetEntryView: View {
-    let entry: FocusTimerEntry
+    let entry: FocusStatisticsEntry
     @Environment(\.widgetFamily) private var family
 
     var body: some View {
-        TimelineView(.periodic(from: entry.date, by: 1.0)) { context in
-            let session = session(at: context.date)
-
-            GeometryReader { proxy in
-                widgetContent(session: session, size: proxy.size)
-                .frame(width: proxy.size.width, height: proxy.size.height)
-            }
-            .containerBackground(MewFocusColor.surface, for: .widget)
-            .widgetURL(URL(string: "mewfocus://timer"))
-        }
-    }
-
-    @ViewBuilder
-    private func widgetContent(session: FocusSession, size: CGSize) -> some View {
-        switch family {
-        case .systemLarge:
-            largeWidget(session: session)
-        default:
-            mediumWidget(session: session)
-        }
-    }
-
-    private func mediumWidget(session: FocusSession) -> some View {
-        HStack(spacing: 16) {
-            catStage(catSize: CGSize(width: 122, height: 88), isLarge: false)
-                .frame(width: 134, height: 132)
-
-            VStack(alignment: .leading, spacing: 10) {
-                HStack(spacing: 8) {
-                    statusDotColor(for: session.state)
-                        .frame(width: 8, height: 8)
-                        .clipShape(Circle())
-
-                    Text(statusTitle(for: session.state))
-                        .font(.system(size: 14, weight: .bold))
-                        .foregroundStyle(MewFocusColor.textPrimary)
+        GeometryReader { proxy in
+            ZStack(alignment: .bottomTrailing) {
+                switch family {
+                case .systemSmall:
+                    smallWidget(size: proxy.size)
+                case .systemLarge:
+                    largeWidget(size: proxy.size)
+                default:
+                    mediumWidget(size: proxy.size)
                 }
-                .padding(.horizontal, 12)
-                .padding(.vertical, 7)
-                .background(.white)
-                .clipShape(Capsule())
-                .overlay(Capsule().stroke(MewFocusColor.divider.opacity(0.82)))
-
-                timerText(for: session, fontSize: 46)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.74)
-
-                progressBar(progress: session.progress)
-                    .frame(height: 10)
-
-                Text("Focus Dial")
-                    .font(.system(size: 15, weight: .bold))
-                    .foregroundStyle(MewFocusColor.textSecondary)
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
+            .frame(width: proxy.size.width, height: proxy.size.height)
         }
-        .padding(18)
+        .unredacted()
+        .containerBackground(for: .widget) {
+            widgetContainerBackground
+        }
+        .widgetURL(URL(string: "mewfocus://timer"))
     }
 
-    private func largeWidget(session: FocusSession) -> some View {
-        VStack(spacing: 16) {
-            HStack(spacing: 12) {
-                MewFocusAsset.image(MewFocusAsset.headerCat)
-                    .resizable()
-                    .scaledToFit()
-                    .frame(width: 42, height: 42)
+    private func smallWidget(size: CGSize) -> some View {
+        VStack(alignment: .leading, spacing: 7) {
+            HStack(alignment: .center, spacing: 8) {
+                catIcon(size: 42)
 
                 VStack(alignment: .leading, spacing: 0) {
                     Text("Focus Dial")
-                        .font(.system(size: 27, weight: .bold))
+                        .font(.system(size: 15, weight: .bold))
                         .foregroundStyle(MewFocusColor.textPrimary)
                         .lineLimit(1)
+                        .minimumScaleFactor(0.70)
 
-                    Text("집중에 몰입하는 시간")
-                        .font(.system(size: 15, weight: .bold))
+                    Text("집중 시간")
+                        .font(.system(size: 10, weight: .bold))
                         .foregroundStyle(MewFocusColor.textSecondary)
                         .lineLimit(1)
                 }
-
-                Spacer(minLength: 8)
-                Image(systemName: "sparkle.magnifyingglass")
-                    .font(.system(size: 22, weight: .bold))
-                    .foregroundStyle(MewFocusColor.coral)
             }
 
-            catStage(catSize: CGSize(width: 194, height: 132), isLarge: true)
-                .frame(maxWidth: .infinity)
-                .frame(height: 166)
+            Spacer(minLength: 2)
 
-            VStack(spacing: 10) {
-                statusPill(session: session)
-                timerText(for: session, fontSize: 66)
+            Text("남은 시간")
+                .font(.system(size: 11, weight: .bold))
+                .foregroundStyle(MewFocusColor.textSecondary)
+
+            countdownText(fontSize: 30)
+
+            statusPill(compact: true)
+
+            Spacer(minLength: 2)
+
+            HStack(alignment: .firstTextBaseline, spacing: 5) {
+                Image(systemName: "chart.bar.fill")
+                    .font(.system(size: 11, weight: .bold))
+                    .foregroundStyle(MewFocusColor.coral)
+                Text(durationText(entry.snapshot.todayFocusDuration))
+                    .font(.system(size: 14, weight: .bold, design: .rounded))
+                    .foregroundStyle(MewFocusColor.textPrimary)
                     .lineLimit(1)
-                    .minimumScaleFactor(0.78)
-                progressBar(progress: session.progress)
-                    .frame(height: 12)
+                    .minimumScaleFactor(0.72)
             }
         }
-        .padding(.top, 22)
-        .padding(.horizontal, 22)
-        .padding(.bottom, 20)
+        .padding(14)
+        .frame(width: size.width, height: size.height, alignment: .topLeading)
     }
 
-    private func catStage(catSize: CGSize, isLarge: Bool) -> some View {
-        ZStack {
-            RoundedRectangle(cornerRadius: isLarge ? 28 : 24, style: .continuous)
-                .fill(
-                    LinearGradient(
-                        colors: [
-                            Color(red: 0.94, green: 0.97, blue: 1.0),
-                            MewFocusColor.surface,
-                            Color(red: 1.0, green: 0.91, blue: 0.87)
-                        ],
-                        startPoint: .topLeading,
-                        endPoint: .bottomTrailing
-                    )
-                )
-                .overlay(
-                    RoundedRectangle(cornerRadius: isLarge ? 28 : 24, style: .continuous)
-                        .stroke(.white.opacity(0.82), lineWidth: 1.4)
-                )
+    private func mediumWidget(size: CGSize) -> some View {
+        let cardHeight = max(82, size.height - 74)
 
-            VStack(spacing: isLarge ? 8 : 4) {
-                HStack(spacing: 6) {
-                    Capsule()
-                        .fill(MewFocusColor.coral.opacity(0.9))
-                        .frame(width: isLarge ? 54 : 34, height: isLarge ? 8 : 6)
-                    Capsule()
-                        .fill(Color(red: 0.42, green: 0.64, blue: 0.96).opacity(0.62))
-                        .frame(width: isLarge ? 28 : 18, height: isLarge ? 8 : 6)
-                    Capsule()
-                        .fill(MewFocusColor.divider)
-                        .frame(width: isLarge ? 18 : 12, height: isLarge ? 8 : 6)
-                }
-                .frame(maxWidth: .infinity, alignment: .trailing)
+        return VStack(alignment: .leading, spacing: 9) {
+            header(iconSize: 44, titleSize: 21, subtitleSize: 11)
 
-                Spacer(minLength: 0)
+            HStack(alignment: .top, spacing: 10) {
+                mediumCountdownCard()
+                    .frame(maxWidth: .infinity)
+                    .frame(height: cardHeight)
+
+                mediumTodayFocusCard
+                    .frame(maxWidth: .infinity)
+                    .frame(height: cardHeight)
             }
-            .padding(isLarge ? 18 : 13)
+            .frame(maxHeight: .infinity, alignment: .top)
+        }
+        .padding(.horizontal, 16)
+        .padding(.top, 10)
+        .padding(.bottom, 20)
+        .frame(width: size.width, height: size.height, alignment: .topLeading)
+    }
 
+    private func largeWidget(size: CGSize) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            header(iconSize: 58, titleSize: 25, subtitleSize: 14)
+
+            HStack(alignment: .bottom, spacing: 10) {
+                countdownBlock(fontSize: 52, showSessionTitle: true)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                MewFocusAsset.image(MewFocusAsset.timerCat)
+                    .resizable()
+                    .scaledToFit()
+                    .frame(width: min(112, size.width * 0.26), height: 74)
+                    .opacity(0.9)
+                    .allowsHitTesting(false)
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 14)
+            .background(filledCardBackground(cornerRadius: 20, tint: MewFocusColor.coral))
+
+            HStack(alignment: .top, spacing: 10) {
+                statTile(
+                    title: "오늘의 집중",
+                    systemImage: "chart.bar.fill",
+                    value: durationText(entry.snapshot.todayFocusDuration),
+                    accent: MewFocusColor.coral,
+                    isLarge: true
+                )
+
+                recentTile(limit: 4, isLarge: true)
+            }
+            .frame(maxHeight: .infinity, alignment: .top)
+        }
+        .padding(.top, 18)
+        .padding(.horizontal, 18)
+        .padding(.bottom, 30)
+        .frame(width: size.width, height: size.height, alignment: .topLeading)
+    }
+
+    private func countdownBlock(fontSize: CGFloat, showSessionTitle: Bool) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("남은 시간")
+                .font(.system(size: fontSize > 50 ? 14 : 12, weight: .bold))
+                .foregroundStyle(MewFocusColor.textSecondary)
+                .lineLimit(1)
+
+            countdownText(fontSize: fontSize)
+
+            HStack(spacing: 8) {
+                statusPill(compact: fontSize < 45)
+
+                if showSessionTitle, let timerSnapshot = entry.timerSnapshot {
+                    Text(sessionDescription(for: timerSnapshot.session))
+                        .font(.system(size: fontSize > 50 ? 12 : 11, weight: .bold))
+                        .foregroundStyle(MewFocusColor.textTertiary)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.72)
+                }
+            }
+        }
+    }
+
+    private func mediumCountdownCard() -> some View {
+        VStack(alignment: .leading, spacing: 5) {
+            Text("남은 시간")
+                .font(.system(size: 12, weight: .bold))
+                .foregroundStyle(MewFocusColor.textSecondary)
+                .lineLimit(1)
+
+            countdownText(fontSize: 30)
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+            HStack(spacing: 6) {
+                statusPill(compact: true)
+                    .fixedSize(horizontal: true, vertical: false)
+
+                if let timerSnapshot = entry.timerSnapshot {
+                    Text(sessionDescription(for: timerSnapshot.session))
+                        .font(.system(size: 9, weight: .bold))
+                        .foregroundStyle(MewFocusColor.textTertiary)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.65)
+                }
+            }
+        }
+        .layoutPriority(1)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
+        .background(filledCardBackground(cornerRadius: 18, tint: MewFocusColor.coral))
+    }
+
+    private func statTile(
+        title: String,
+        systemImage: String,
+        value: String,
+        accent: Color,
+        isLarge: Bool = false,
+        compact: Bool = false
+    ) -> some View {
+        VStack(alignment: .leading, spacing: isLarge ? 8 : 5) {
+            HStack(spacing: 7) {
+                Image(systemName: systemImage)
+                    .font(.system(size: isLarge ? 15 : 12, weight: .bold))
+                    .foregroundStyle(accent)
+
+                Text(title)
+                    .font(.system(size: isLarge ? 13 : 11, weight: .bold))
+                    .foregroundStyle(MewFocusColor.textSecondary)
+                    .lineLimit(compact ? 1 : 2)
+                    .minimumScaleFactor(0.7)
+            }
+            .lineLimit(1)
+
+            Text(compact ? compactDurationText(entry.snapshot.todayFocusDuration) : value)
+                .font(.system(size: isLarge ? 25 : (compact ? 16 : 18), weight: .bold, design: .rounded))
+                .foregroundStyle(MewFocusColor.textPrimary)
+                .monospacedDigit()
+                .lineLimit(2)
+                .minimumScaleFactor(0.58)
+
+            if isLarge {
+                Text("차곡차곡 쌓인 기록")
+                    .font(.system(size: 11, weight: .bold))
+                    .foregroundStyle(MewFocusColor.textTertiary)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.72)
+            }
+        }
+        .frame(maxWidth: .infinity, minHeight: isLarge ? 98 : (compact ? 84 : 68), alignment: .topLeading)
+        .padding(isLarge ? 13 : (compact ? 9 : 10))
+        .background(outlinedCardBackground(cornerRadius: isLarge ? 18 : 14))
+    }
+
+    private var mediumTodayFocusCard: some View {
+        VStack(alignment: .leading, spacing: 5) {
+            HStack(spacing: 7) {
+                Image(systemName: "chart.bar.fill")
+                    .font(.system(size: 16, weight: .bold))
+                    .foregroundStyle(MewFocusColor.coral)
+
+                Text("오늘의 집중")
+                    .font(.system(size: 13, weight: .bold))
+                    .foregroundStyle(MewFocusColor.textSecondary)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.72)
+            }
+
+            Text(durationText(entry.snapshot.todayFocusDuration))
+                .font(.system(size: 25, weight: .bold, design: .rounded))
+                .foregroundStyle(MewFocusColor.textPrimary)
+                .monospacedDigit()
+                .lineLimit(2)
+                .minimumScaleFactor(0.58)
+
+            Text("차곡차곡 쌓인 기록")
+                .font(.system(size: 10, weight: .bold))
+                .foregroundStyle(MewFocusColor.textTertiary)
+                .lineLimit(1)
+                .minimumScaleFactor(0.72)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .padding(.horizontal, 13)
+        .padding(.vertical, 11)
+        .background(outlinedCardBackground(cornerRadius: 18))
+        .overlay(alignment: .topTrailing) {
             MewFocusAsset.image(MewFocusAsset.timerCat)
                 .resizable()
                 .scaledToFit()
-                .frame(width: catSize.width, height: catSize.height)
-                .offset(y: isLarge ? 18 : 12)
-
-            Capsule()
-                .fill(.white.opacity(0.82))
-                .frame(width: catSize.width * 0.82, height: isLarge ? 12 : 9)
-                .blur(radius: 8)
-                .offset(y: catSize.height / 2 + (isLarge ? 20 : 14))
+                .frame(width: 84, height: 58)
+                .offset(x: -56, y: -42)
+                .opacity(0.94)
+                .allowsHitTesting(false)
         }
     }
 
-    private func statusPill(session: FocusSession) -> some View {
-        HStack(spacing: 8) {
-            Circle()
-                .fill(statusDotColor(for: session.state))
-                .frame(width: 9, height: 9)
-            Text(statusTitle(for: session.state))
-        }
-        .font(.system(size: 16, weight: .bold))
-        .foregroundStyle(MewFocusColor.textPrimary)
-        .padding(.horizontal, 18)
-        .padding(.vertical, 9)
-        .background(.white)
-        .clipShape(Capsule())
-        .overlay(Capsule().stroke(MewFocusColor.divider.opacity(0.85)))
-        .shadow(color: .black.opacity(0.035), radius: 8, x: 0, y: 3)
-    }
+    private func recentTile(limit: Int, isLarge: Bool = false, compact: Bool = false) -> some View {
+        VStack(alignment: .leading, spacing: isLarge ? 8 : 5) {
+            HStack(spacing: 7) {
+                Image(systemName: "clock.badge.checkmark")
+                    .font(.system(size: isLarge ? 15 : 12, weight: .bold))
+                    .foregroundStyle(MewFocusColor.coral)
 
-    private func progressBar(progress: Double) -> some View {
-        GeometryReader { proxy in
-            let width = max(proxy.size.width * progress, 8)
+                Text("최근 세션")
+                    .font(.system(size: isLarge ? 13 : 11, weight: .bold))
+                    .foregroundStyle(MewFocusColor.textSecondary)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.72)
+            }
 
-            ZStack(alignment: .leading) {
-                Capsule()
-                    .fill(MewFocusColor.divider.opacity(0.82))
-
-                Capsule()
-                    .fill(
-                        LinearGradient(
-                            colors: [MewFocusColor.coralLight, MewFocusColor.coral],
-                            startPoint: .leading,
-                            endPoint: .trailing
-                        )
-                    )
-                    .frame(width: width)
+            if entry.snapshot.recentSessions.isEmpty {
+                emptyRecentText
+            } else {
+                ForEach(Array(entry.snapshot.recentSessions.prefix(limit))) { session in
+                    sessionRow(session, isLarge: isLarge, compact: compact)
+                }
             }
         }
+        .frame(maxWidth: .infinity, minHeight: isLarge ? 98 : (compact ? 56 : 68), alignment: .topLeading)
+        .padding(isLarge ? 13 : (compact ? 9 : 10))
+        .background(outlinedCardBackground(cornerRadius: isLarge ? 18 : 14))
     }
 
-    private func session(at date: Date) -> FocusSession {
-        let snapshot = entry.snapshot
-        guard snapshot.session.state == .running else { return snapshot.session }
+    private var widgetContainerBackground: some View {
+        LinearGradient(
+            colors: [
+                MewFocusColor.surface,
+                Color(red: 1.0, green: 0.985, blue: 0.965),
+                Color(red: 1.0, green: 0.955, blue: 0.935)
+            ],
+            startPoint: .topLeading,
+            endPoint: .bottomTrailing
+        )
+    }
 
-        let elapsedTime = max(date.timeIntervalSince(snapshot.updatedAt), 0)
-        let remainingTime = max(snapshot.session.remainingTime - elapsedTime, 0)
+    private func filledCardBackground(cornerRadius: CGFloat, tint: Color) -> some View {
+        RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+            .fill(
+                LinearGradient(
+                    colors: [
+                        tint.opacity(0.105),
+                        Color.white.opacity(0.92),
+                        tint.opacity(0.055)
+                    ],
+                    startPoint: .topLeading,
+                    endPoint: .bottomTrailing
+                )
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                    .stroke(tint.opacity(0.28), lineWidth: 1)
+            )
+    }
+
+    private func outlinedCardBackground(cornerRadius: CGFloat) -> some View {
+        RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+            .fill(Color.white.opacity(0.82))
+            .overlay(
+                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                    .stroke(MewFocusColor.divider.opacity(0.92), lineWidth: 1)
+            )
+    }
+
+    private func header(iconSize: CGFloat, titleSize: CGFloat, subtitleSize: CGFloat) -> some View {
+        HStack(spacing: 10) {
+            catIcon(size: iconSize)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Focus Dial")
+                    .font(.system(size: titleSize, weight: .bold))
+                    .foregroundStyle(MewFocusColor.textPrimary)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.72)
+
+                Text("집중에 몰입하는 시간")
+                    .font(.system(size: subtitleSize, weight: .bold))
+                    .foregroundStyle(MewFocusColor.textSecondary)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.72)
+            }
+
+            Spacer(minLength: 0)
+        }
+    }
+
+    private func catIcon(size: CGFloat) -> some View {
+        MewFocusAsset.image(MewFocusAsset.headerCat)
+            .resizable()
+            .scaledToFit()
+            .frame(width: size, height: size)
+    }
+
+    @ViewBuilder
+    private func countdownText(fontSize: CGFloat) -> some View {
+        if let timerInterval = timerInterval {
+            Text(timerInterval: timerInterval, pauseTime: nil, countsDown: true, showsHours: false)
+                .font(.system(size: fontSize, weight: .bold, design: .rounded))
+                .foregroundStyle(MewFocusColor.textPrimary)
+                .monospacedDigit()
+                .lineLimit(1)
+                .minimumScaleFactor(0.58)
+        } else {
+            Text(timeText(for: resolvedSession.remainingTime))
+                .font(.system(size: fontSize, weight: .bold, design: .rounded))
+                .foregroundStyle(MewFocusColor.textPrimary)
+                .monospacedDigit()
+                .lineLimit(1)
+                .minimumScaleFactor(0.58)
+        }
+    }
+
+    private func statusPill(compact: Bool = false) -> some View {
+        HStack(spacing: 7) {
+            Circle()
+                .fill(statusColor)
+                .frame(width: compact ? 7 : 8, height: compact ? 7 : 8)
+
+            Text(statusTitle)
+                .font(.system(size: compact ? 12 : 13, weight: .bold))
+                .foregroundStyle(MewFocusColor.textPrimary)
+                .lineLimit(1)
+        }
+        .padding(.horizontal, compact ? 9 : 11)
+        .padding(.vertical, compact ? 5 : 7)
+        .background(Color.white.opacity(0.92))
+        .clipShape(Capsule())
+        .overlay(Capsule().stroke(statusColor.opacity(0.24)))
+    }
+
+    private func compactMetricRow(title: String, systemImage: String, value: String) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 6) {
+                Image(systemName: systemImage)
+                    .font(.system(size: 12, weight: .bold))
+                    .foregroundStyle(MewFocusColor.coral)
+
+                Text(title)
+                    .font(.system(size: 11, weight: .bold))
+                    .foregroundStyle(MewFocusColor.textSecondary)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.72)
+            }
+
+            Text(value)
+                .font(.system(size: 16, weight: .bold, design: .rounded))
+                .foregroundStyle(MewFocusColor.textPrimary)
+                .lineLimit(1)
+                .minimumScaleFactor(0.58)
+        }
+        .frame(maxWidth: .infinity, minHeight: 49, alignment: .leading)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+        .background(outlinedCardBackground(cornerRadius: 14))
+    }
+
+    private func compactRecentRow(_ session: SessionRecord) -> some View {
+        VStack(alignment: .leading, spacing: 5) {
+            HStack(spacing: 6) {
+                Image(systemName: "clock.badge.checkmark")
+                    .font(.system(size: 12, weight: .bold))
+                    .foregroundStyle(MewFocusColor.coral)
+
+                Text("최근 세션")
+                    .font(.system(size: 11, weight: .bold))
+                    .foregroundStyle(MewFocusColor.textSecondary)
+                    .lineLimit(1)
+            }
+
+            HStack(spacing: 5) {
+                Circle()
+                    .fill(sessionAccentColor(session))
+                    .frame(width: 7, height: 7)
+
+                Text(session.title)
+                    .font(.system(size: 10, weight: .bold))
+                    .foregroundStyle(MewFocusColor.textPrimary)
+                    .lineLimit(1)
+
+                Text(compactDurationText(session.duration))
+                    .font(.system(size: 10, weight: .bold))
+                    .foregroundStyle(MewFocusColor.textSecondary)
+                    .lineLimit(1)
+            }
+        }
+        .frame(maxWidth: .infinity, minHeight: 49, alignment: .leading)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+        .background(outlinedCardBackground(cornerRadius: 14))
+    }
+
+    private func sessionRow(_ session: SessionRecord, isLarge: Bool, compact: Bool = false) -> some View {
+        HStack(spacing: isLarge ? 7 : 5) {
+            Circle()
+                .fill(sessionAccentColor(session))
+                .frame(width: isLarge ? 8 : 7, height: isLarge ? 8 : 7)
+
+            Text(session.title)
+                .font(.system(size: isLarge ? 12 : (compact ? 9 : 10), weight: .bold))
+                .foregroundStyle(MewFocusColor.textPrimary)
+                .lineLimit(1)
+
+            Text(compactDurationText(session.duration))
+                .font(.system(size: isLarge ? 12 : (compact ? 9 : 10), weight: .bold))
+                .foregroundStyle(MewFocusColor.textSecondary)
+                .lineLimit(1)
+                .minimumScaleFactor(0.7)
+
+            Spacer(minLength: 2)
+
+        }
+    }
+
+    private var emptyRecentText: some View {
+        Text("아직 기록이 없어요")
+            .font(.system(size: 12, weight: .bold))
+            .foregroundStyle(MewFocusColor.textTertiary)
+    }
+
+    private func sessionAccentColor(_ session: SessionRecord) -> Color {
+        session.kind == .shortBreak || session.title == "휴식" ? MewFocusColor.mint : MewFocusColor.coral
+    }
+
+    private var resolvedSession: FocusSession {
+        guard let timerSnapshot = entry.timerSnapshot else { return FocusSession() }
+        guard timerSnapshot.session.state == .running else { return timerSnapshot.session }
+
+        let elapsedTime = max(entry.date.timeIntervalSince(timerSnapshot.updatedAt), 0)
+        let remainingTime = max(timerSnapshot.session.remainingTime - elapsedTime, 0)
+
         return FocusSession(
-            preset: snapshot.session.preset,
-            duration: snapshot.session.duration,
+            preset: timerSnapshot.session.preset,
+            duration: timerSnapshot.session.duration,
             remainingTime: remainingTime,
             state: remainingTime > 0 ? .running : .completed
         )
     }
 
-    private func statusTitle(for state: TimerState) -> String {
-        switch state {
+    private var timerInterval: ClosedRange<Date>? {
+        guard
+            let timerSnapshot = entry.timerSnapshot,
+            timerSnapshot.session.state == .running
+        else {
+            return nil
+        }
+
+        let startDate = timerSnapshot.updatedAt
+        let endDate = startDate.addingTimeInterval(timerSnapshot.session.remainingTime)
+        guard endDate > entry.date else { return nil }
+
+        return startDate...endDate
+    }
+
+    private var statusTitle: String {
+        switch resolvedSession.state {
         case .idle: "대기 중"
         case .running: "집중 중"
         case .paused: "일시정지"
@@ -259,62 +596,61 @@ struct MewFocusWidgetEntryView: View {
         }
     }
 
-    private func statusDotColor(for state: TimerState) -> Color {
-        switch state {
-        case .idle: MewFocusColor.textTertiary
-        case .running: MewFocusColor.coral
-        case .paused: MewFocusColor.textTertiary
-        case .completed: MewFocusColor.coral
+    private var statusColor: Color {
+        switch resolvedSession.state {
+        case .idle, .paused:
+            MewFocusColor.textTertiary
+        case .running, .completed:
+            MewFocusColor.coral
         }
+    }
+
+    private func sessionDescription(for session: FocusSession) -> String {
+        let title = session.preset?.title ?? durationText(session.duration)
+        return "\(title) 세션"
     }
 
     private func timeText(for remainingTime: TimeInterval) -> String {
-        let totalSeconds = Int(ceil(remainingTime))
+        let totalSeconds = max(Int(ceil(remainingTime)), 0)
         return String(format: "%02d:%02d", totalSeconds / 60, totalSeconds % 60)
     }
 
-    @ViewBuilder
-    private func timerText(for session: FocusSession, fontSize: CGFloat) -> some View {
-        if let interval = timerInterval(for: session) {
-            Text(
-                timerInterval: interval,
-                pauseTime: nil,
-                countsDown: true,
-                showsHours: false
-            )
-            .font(.system(size: fontSize, weight: .bold, design: .rounded))
-            .foregroundStyle(MewFocusColor.textPrimary)
-            .monospacedDigit()
-        } else {
-            Text(timeText(for: session.remainingTime))
-                .font(.system(size: fontSize, weight: .bold, design: .rounded))
-                .foregroundStyle(MewFocusColor.textPrimary)
-                .monospacedDigit()
+    private func durationText(_ duration: TimeInterval) -> String {
+        let totalMinutes = Int(duration / 60)
+        let hours = totalMinutes / 60
+        let minutes = totalMinutes % 60
+
+        if hours == 0 {
+            return "\(minutes)분"
         }
+
+        return "\(hours)시간 \(minutes)분"
     }
 
-    private func timerInterval(for session: FocusSession) -> ClosedRange<Date>? {
-        guard session.state == .running else { return nil }
+    private func compactDurationText(_ duration: TimeInterval) -> String {
+        "\(max(Int(duration / 60), 1))분"
+    }
 
-        let startDate = entry.snapshot.updatedAt
-        let endDate = startDate.addingTimeInterval(entry.snapshot.session.remainingTime)
-
-        guard endDate > startDate else { return nil }
-        return startDate...endDate
+    private func timeText(_ date: Date) -> String {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "ko_KR")
+        formatter.dateFormat = "a h:mm"
+        return formatter.string(from: date)
     }
 }
 
 struct MewFocusWidget: Widget {
-    static let kind = "MewFocusCatWidget"
+    static let kind = "MewFocusDashboardWidget"
     let kind = Self.kind
 
     var body: some WidgetConfiguration {
-        StaticConfiguration(kind: kind, provider: FocusTimerProvider()) { entry in
+        StaticConfiguration(kind: kind, provider: FocusStatisticsProvider()) { entry in
             MewFocusWidgetEntryView(entry: entry)
         }
-        .configurationDisplayName("Mew Focus Cat")
-        .description("고양이와 함께 남은 집중 시간을 확인합니다.")
+        .configurationDisplayName("Mew Focus")
+        .description("오늘의 집중 시간과 최근 세션을 확인합니다.")
         .supportedFamilies([.systemMedium, .systemLarge])
+        .contentMarginsDisabled()
     }
 }
 
@@ -328,15 +664,50 @@ struct MewFocusWidgetBundle: WidgetBundle {
 #Preview(as: .systemLarge) {
     MewFocusWidget()
 } timeline: {
-    FocusTimerEntry(
+    FocusStatisticsEntry(
         date: .now,
-        snapshot: FocusSessionSnapshot(
+        timerSnapshot: FocusSessionSnapshot(
             session: FocusSession(
                 preset: .twentyFiveMinutes,
                 duration: 25 * 60,
-                remainingTime: 19 * 60 + 38,
+                remainingTime: 22 * 60 + 14,
                 state: .running
             ),
+            updatedAt: .now
+        ),
+        snapshot: FocusStatisticsSnapshot(
+            todayFocusDuration: 2 * 3600 + 45 * 60,
+            recentSessions: [
+                SessionRecord(title: "집중", duration: 25 * 60, completedAt: .now.addingTimeInterval(-18 * 60), kind: .focus),
+                SessionRecord(title: "휴식", duration: 10 * 60, completedAt: .now.addingTimeInterval(-48 * 60), kind: .shortBreak),
+                SessionRecord(title: "집중", duration: 50 * 60, completedAt: .now.addingTimeInterval(-82 * 60), kind: .focus)
+            ],
+            updatedAt: .now
+        )
+    )
+}
+
+#Preview(as: .systemMedium) {
+    MewFocusWidget()
+} timeline: {
+    FocusStatisticsEntry(
+        date: .now,
+        timerSnapshot: FocusSessionSnapshot(
+            session: FocusSession(
+                preset: .twentyFiveMinutes,
+                duration: 25 * 60,
+                remainingTime: 22 * 60 + 14,
+                state: .running
+            ),
+            updatedAt: .now
+        ),
+        snapshot: FocusStatisticsSnapshot(
+            todayFocusDuration: 2 * 3600 + 45 * 60,
+            recentSessions: [
+                SessionRecord(title: "집중", duration: 25 * 60, completedAt: .now.addingTimeInterval(-18 * 60), kind: .focus),
+                SessionRecord(title: "휴식", duration: 10 * 60, completedAt: .now.addingTimeInterval(-48 * 60), kind: .shortBreak),
+                SessionRecord(title: "집중", duration: 50 * 60, completedAt: .now.addingTimeInterval(-82 * 60), kind: .focus)
+            ],
             updatedAt: .now
         )
     )

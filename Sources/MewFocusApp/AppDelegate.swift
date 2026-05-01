@@ -1,5 +1,4 @@
 import AppKit
-import Combine
 import MewFocusData
 import MewFocusDesign
 import MewFocusDomain
@@ -11,14 +10,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusItem: NSStatusItem?
     private let popover = NSPopover()
     private let snapshotRepository = AppGroupFocusSessionSnapshotRepository()
+    private let statisticsSnapshotRepository = AppGroupFocusStatisticsSnapshotRepository()
     private let statisticsRepository: any FocusStatisticsRepository = AppDelegate.makeStatisticsRepository()
-    private let displaySettings = FocusPopoverDisplaySettings(scale: AppDelegate.loadPopoverScale())
-    private var cancellables = Set<AnyCancellable>()
     private var animationTimer: Timer?
     private var currentMenuBarFrameIndex = 0
     private let menuBarIconSize = NSSize(width: 22, height: 22)
-    private let popoverBaseSize = NSSize(width: 530, height: 920)
-    private static let popoverScaleKey = "MewFocusPopoverScale"
+    private let popoverBaseSize = NSSize(width: 530, height: 940)
+    private let popoverScale: CGFloat = 0.72
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         guard ensureSingleInstance() else { return }
@@ -34,19 +32,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         startMenuBarCatAnimation()
 
         popover.behavior = .transient
-        popover.contentSize = scaledPopoverSize(for: displaySettings.scale)
+        popover.contentSize = scaledPopoverSize
         popover.contentViewController = NSHostingController(
             rootView: ScaledFocusPopoverRoot(
                 baseSize: popoverBaseSize,
+                scale: popoverScale,
                 snapshotRepository: snapshotRepository,
                 statisticsRepository: statisticsRepository,
-                displaySettings: displaySettings,
                 reloadWidgetTimelines: {
-                    WidgetCenter.shared.reloadTimelines(ofKind: "MewFocusCatWidget")
+                    WidgetCenter.shared.reloadTimelines(ofKind: "MewFocusDashboardWidget")
+                },
+                updateWidgetStatistics: { [statisticsSnapshotRepository] snapshot in
+                    statisticsSnapshotRepository.saveSnapshot(snapshot)
+                    WidgetCenter.shared.reloadTimelines(ofKind: "MewFocusDashboardWidget")
                 }
             )
         )
-        bindPopoverDisplaySettings()
     }
 
     func applicationWillTerminate(_ notification: Notification) {
@@ -96,42 +97,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         (try? SwiftDataFocusStatisticsRepository()) ?? InMemoryFocusStatisticsRepository()
     }
 
-    private static func loadPopoverScale() -> Double {
-        let storedScale = UserDefaults.standard.double(forKey: popoverScaleKey)
-        guard storedScale > 0 else { return FocusPopoverDisplaySettings.defaultScale }
-
-        return min(
-            max(storedScale, FocusPopoverDisplaySettings.minimumScale),
-            FocusPopoverDisplaySettings.maximumScale
-        )
-    }
-
-    private func bindPopoverDisplaySettings() {
-        displaySettings.$scale
-            .removeDuplicates()
-            .sink { [weak self] scale in
-                guard let self else { return }
-
-                let clampedScale = min(
-                    max(scale, FocusPopoverDisplaySettings.minimumScale),
-                    FocusPopoverDisplaySettings.maximumScale
-                )
-
-                if clampedScale != scale {
-                    displaySettings.scale = clampedScale
-                    return
-                }
-
-                UserDefaults.standard.set(clampedScale, forKey: Self.popoverScaleKey)
-                popover.contentSize = scaledPopoverSize(for: clampedScale)
-            }
-            .store(in: &cancellables)
-    }
-
-    private func scaledPopoverSize(for scale: Double) -> NSSize {
+    private var scaledPopoverSize: NSSize {
         NSSize(
-            width: popoverBaseSize.width * CGFloat(scale),
-            height: popoverBaseSize.height * CGFloat(scale)
+            width: popoverBaseSize.width * popoverScale,
+            height: popoverBaseSize.height * popoverScale
         )
     }
 
@@ -226,25 +195,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
 private struct ScaledFocusPopoverRoot: View {
     let baseSize: NSSize
+    let scale: CGFloat
     let snapshotRepository: FocusSessionSnapshotRepository?
     let statisticsRepository: any FocusStatisticsRepository
-    @ObservedObject var displaySettings: FocusPopoverDisplaySettings
     let reloadWidgetTimelines: () -> Void
+    let updateWidgetStatistics: (FocusStatisticsSnapshot) -> Void
 
     var body: some View {
         let scaledSize = CGSize(
-            width: baseSize.width * CGFloat(displaySettings.scale),
-            height: baseSize.height * CGFloat(displaySettings.scale)
+            width: baseSize.width * scale,
+            height: baseSize.height * scale
         )
 
         FocusPopoverView(
             snapshotRepository: snapshotRepository,
             statisticsRepository: statisticsRepository,
-            displaySettings: displaySettings,
-            reloadWidgetTimelines: reloadWidgetTimelines
+            reloadWidgetTimelines: reloadWidgetTimelines,
+            updateWidgetStatistics: updateWidgetStatistics
         )
         .frame(width: baseSize.width, height: baseSize.height, alignment: .topLeading)
-        .scaleEffect(displaySettings.scale, anchor: .topLeading)
+        .scaleEffect(scale, anchor: .topLeading)
         .frame(width: scaledSize.width, height: scaledSize.height, alignment: .topLeading)
+        .background(MewFocusColor.surface)
+        .clipShape(RoundedRectangle(cornerRadius: 28 * scale, style: .continuous))
+        .transaction { transaction in
+            transaction.animation = nil
+        }
     }
 }

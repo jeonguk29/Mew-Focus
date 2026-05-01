@@ -1,60 +1,131 @@
 import Charts
+import AppKit
 import MewFocusDesign
 import MewFocusDomain
 import SwiftUI
+import UserNotifications
 
-public final class FocusPopoverDisplaySettings: ObservableObject {
-    public static let defaultScale = 0.64
-    public static let minimumScale = 0.58
-    public static let maximumScale = 0.92
+private enum FocusTimerMode {
+    case focus
+    case shortBreak
+}
 
-    @Published public var scale: Double
-
-    public init(scale: Double = FocusPopoverDisplaySettings.defaultScale) {
-        self.scale = min(max(scale, Self.minimumScale), Self.maximumScale)
+private extension SessionRecord {
+    var accentColor: Color {
+        isShortBreak ? MewFocusColor.mint : MewFocusColor.coral
     }
 
-    public func resetScale() {
-        scale = Self.defaultScale
+    var isShortBreak: Bool {
+        kind == .shortBreak || title == "휴식"
+    }
+}
+
+private enum FocusPresetStorage {
+    static let defaultDurations = FocusPreset.defaults.map(\.duration)
+
+    private static let key = "mew.focus.focusPresetDurations"
+
+    static func load() -> [TimeInterval] {
+        guard
+            let data = UserDefaults.standard.data(forKey: key),
+            let values = try? JSONDecoder().decode([TimeInterval].self, from: data)
+        else {
+            return defaultDurations
+        }
+
+        return normalizedDurations(values)
+    }
+
+    static func save(_ durations: [TimeInterval]) {
+        guard let data = try? JSONEncoder().encode(normalizedDurations(durations)) else { return }
+        UserDefaults.standard.set(data, forKey: key)
+    }
+
+    static func normalizedDurations(_ durations: [TimeInterval]) -> [TimeInterval] {
+        let filledDurations = Array((durations + defaultDurations).prefix(defaultDurations.count))
+        return filledDurations.map { duration in
+            if duration <= 10 {
+                return 10
+            }
+
+            let minutes = min(max(Int((duration / 60).rounded()), 1), 180)
+            return TimeInterval(minutes * 60)
+        }
+    }
+}
+
+private struct GoalNotificationSettings: Codable, Equatable {
+    var isHalfGoalEnabled: Bool
+    var isFullGoalEnabled: Bool
+
+    static let `default` = GoalNotificationSettings(
+        isHalfGoalEnabled: false,
+        isFullGoalEnabled: false
+    )
+}
+
+private enum GoalNotificationStorage {
+    private static let settingsKey = "mew.focus.goalNotificationSettings"
+
+    static func loadSettings() -> GoalNotificationSettings {
+        guard
+            let data = UserDefaults.standard.data(forKey: settingsKey),
+            let settings = try? JSONDecoder().decode(GoalNotificationSettings.self, from: data)
+        else {
+            return .default
+        }
+
+        return settings
+    }
+
+    static func saveSettings(_ settings: GoalNotificationSettings) {
+        guard let data = try? JSONEncoder().encode(settings) else { return }
+        UserDefaults.standard.set(data, forKey: settingsKey)
     }
 }
 
 public struct FocusPopoverView: View {
     @State private var session = FocusSession()
     @State private var lastTickDate: Date?
+    @State private var timerMode: FocusTimerMode = .focus
+    @State private var presetDurations = FocusPresetStorage.defaultDurations
     @State private var todayFocusDuration: TimeInterval = 0
     @State private var recentSessions: [SessionRecord] = []
     @State private var focusTrend: [DailyFocusSummary] = []
     @State private var hasRecordedCurrentSession = false
     @State private var isDailyFocusListPresented = false
     @State private var isSessionListPresented = false
-    @State private var isSettingsPresented = false
+    @State private var isPresetSettingsPresented = false
+    @State private var isAppSettingsPresented = false
+    @State private var goalNotificationSettings = GoalNotificationSettings.default
+    @State private var hasSentHalfGoalNotification = false
+    @State private var hasSentFullGoalNotification = false
     @State private var selectedSessionDate = Calendar.current.startOfDay(for: Date())
     @State private var selectedDateSessions: [SessionRecord] = []
     @State private var statisticsDay = Calendar.current.startOfDay(for: Date())
-    @ObservedObject private var displaySettings: FocusPopoverDisplaySettings
 
     private let snapshotRepository: FocusSessionSnapshotRepository?
     private let statisticsRepository: (any FocusStatisticsRepository)?
     private let reloadWidgetTimelines: () -> Void
+    private let updateWidgetStatistics: (FocusStatisticsSnapshot) -> Void
 
     private let startUseCase = StartFocusSessionUseCase()
     private let pauseUseCase = PauseFocusSessionUseCase()
     private let resetUseCase = ResetFocusSessionUseCase()
-    private let endUseCase = EndFocusSessionUseCase()
     private let tickUseCase = TickFocusSessionUseCase()
     private let countdownTimer = Timer.publish(every: 1.0 / 30.0, on: .main, in: .common).autoconnect()
+    private let shortBreakDuration: TimeInterval = 10 * 60
 
     public init(
         snapshotRepository: FocusSessionSnapshotRepository? = nil,
         statisticsRepository: (any FocusStatisticsRepository)? = nil,
-        displaySettings: FocusPopoverDisplaySettings = FocusPopoverDisplaySettings(),
-        reloadWidgetTimelines: @escaping () -> Void = {}
+        reloadWidgetTimelines: @escaping () -> Void = {},
+        updateWidgetStatistics: @escaping (FocusStatisticsSnapshot) -> Void = { _ in }
     ) {
         self.snapshotRepository = snapshotRepository
         self.statisticsRepository = statisticsRepository
-        self._displaySettings = ObservedObject(wrappedValue: displaySettings)
         self.reloadWidgetTimelines = reloadWidgetTimelines
+        self.updateWidgetStatistics = updateWidgetStatistics
     }
 
     public var body: some View {
@@ -64,16 +135,18 @@ public struct FocusPopoverView: View {
             primaryActionButton
             secondaryActions
             presetPicker
-            quickStartHint
             statisticsDashboard
         }
         .padding(.top, 28)
         .padding(.horizontal, 34)
-        .padding(.bottom, 22)
+        .padding(.bottom, 48)
         .frame(width: 530)
+        .frame(minHeight: 940, alignment: .top)
         .background(MewFocusColor.surface)
         .clipShape(RoundedRectangle(cornerRadius: 28, style: .continuous))
         .onAppear {
+            presetDurations = FocusPresetStorage.load()
+            goalNotificationSettings = GoalNotificationStorage.loadSettings()
             restoreSnapshot()
             statisticsDay = Calendar.current.startOfDay(for: Date())
             Task {
@@ -83,6 +156,16 @@ public struct FocusPopoverView: View {
         .onReceive(countdownTimer) { date in
             tickSession(now: date)
             refreshStatisticsIfDayChanged(now: date)
+        }
+        .onChange(of: presetDurations) { _, durations in
+            presetDurations = FocusPresetStorage.normalizedDurations(durations)
+            FocusPresetStorage.save(durations)
+            syncIdleSessionWithEditedPreset()
+        }
+        .onChange(of: goalNotificationSettings) { _, settings in
+            GoalNotificationStorage.saveSettings(settings)
+            requestNotificationAuthorizationIfNeeded(settings)
+            evaluateSessionGoalNotifications()
         }
     }
 
@@ -107,15 +190,18 @@ public struct FocusPopoverView: View {
             Button {
                 isDailyFocusListPresented = false
                 isSessionListPresented = false
-                isSettingsPresented = true
+                isPresetSettingsPresented = false
+                isAppSettingsPresented = true
             } label: {
                 Image(systemName: "gearshape")
                     .font(.system(size: 28, weight: .semibold))
                     .foregroundStyle(MewFocusColor.textPrimary)
             }
             .buttonStyle(.plain)
-            .popover(isPresented: $isSettingsPresented, arrowEdge: .bottom) {
-                FocusSettingsView(displaySettings: displaySettings)
+            .popover(isPresented: $isAppSettingsPresented, arrowEdge: .bottom) {
+                FocusSettingsView(
+                    notificationSettings: $goalNotificationSettings
+                )
             }
         }
     }
@@ -133,7 +219,7 @@ public struct FocusPopoverView: View {
             Circle()
                 .trim(from: 0, to: session.progress)
                 .stroke(
-                    MewFocusColor.coral,
+                    activeAccentColor,
                     style: StrokeStyle(lineWidth: 10, lineCap: .round)
                 )
                 .rotationEffect(.degrees(-90))
@@ -174,25 +260,26 @@ public struct FocusPopoverView: View {
                     .font(.system(size: 25, weight: .bold))
             }
         }
-        .buttonStyle(PrimaryPillButtonStyle())
+        .buttonStyle(
+            PrimaryPillButtonStyle(
+                leadingColor: activeAccentLightColor,
+                trailingColor: activeAccentColor,
+                shadowColor: activeAccentColor
+            )
+        )
         .frame(width: 320)
         .padding(.top, -8)
     }
 
     private var secondaryActions: some View {
-        HStack(spacing: 10) {
-            Button(action: resetSession) {
-                Label("초기화", systemImage: "arrow.clockwise")
+        HStack(spacing: 12) {
+            Button(action: resetCurrentSession) {
+                Label("세션 초기화", systemImage: "arrow.clockwise")
             }
             .buttonStyle(SecondaryPillButtonStyle())
 
-            Button(action: {}) {
+            Button(action: startShortBreak) {
                 Label("짧은 휴식", systemImage: "cup.and.saucer")
-            }
-            .buttonStyle(SecondaryPillButtonStyle())
-
-            Button(action: endSession) {
-                Label("세션 종료", systemImage: "stop.fill")
             }
             .buttonStyle(SecondaryPillButtonStyle())
         }
@@ -201,9 +288,11 @@ public struct FocusPopoverView: View {
 
     private var presetPicker: some View {
         HStack(spacing: 8) {
-            ForEach(FocusPreset.defaults) { preset in
-                Button(preset.title) {
+            ForEach(focusPresets) { preset in
+                Button {
                     hasRecordedCurrentSession = false
+                    resetSessionGoalNotificationFlags()
+                    timerMode = .focus
                     session = FocusSession(
                         preset: preset,
                         duration: preset.duration,
@@ -211,53 +300,46 @@ public struct FocusPopoverView: View {
                         state: .idle
                     )
                     saveSnapshot()
+                } label: {
+                    Text(preset.title)
+                        .font(.system(size: 15, weight: .bold))
+                        .foregroundStyle(isSelectedPreset(preset) ? .white : MewFocusColor.textPrimary)
+                        .frame(width: 58, height: 40)
+                        .background(isSelectedPreset(preset) ? MewFocusColor.coral : .white)
+                        .clipShape(Capsule())
+                        .overlay(Capsule().stroke(MewFocusColor.divider))
+                        .contentShape(Capsule())
                 }
                 .buttonStyle(.plain)
-                .font(.system(size: 15, weight: .bold))
-                .foregroundStyle(session.preset == preset ? .white : MewFocusColor.textPrimary)
-                .frame(width: 58, height: 40)
-                .background(session.preset == preset ? MewFocusColor.coral : .white)
-                .clipShape(Capsule())
-                .overlay(Capsule().stroke(MewFocusColor.divider))
             }
 
-            Button(action: {}) {
+            Button {
+                isDailyFocusListPresented = false
+                isSessionListPresented = false
+                isPresetSettingsPresented = true
+            } label: {
                 Label("직접 설정", systemImage: "pencil")
                     .labelStyle(.titleAndIcon)
+                    .font(.system(size: 14, weight: .bold))
+                    .foregroundStyle(MewFocusColor.textPrimary)
+                    .frame(width: 88, height: 40)
+                    .background(.white)
+                    .clipShape(Capsule())
+                    .overlay(
+                        Capsule()
+                            .stroke(MewFocusColor.textTertiary.opacity(0.72), style: StrokeStyle(lineWidth: 1.2, dash: [5, 4]))
+                    )
+                    .contentShape(Capsule())
             }
             .buttonStyle(.plain)
-            .font(.system(size: 14, weight: .bold))
-            .foregroundStyle(MewFocusColor.textPrimary)
-            .frame(width: 88, height: 40)
-            .background(.white)
-            .clipShape(Capsule())
-            .overlay(
-                Capsule()
-                    .stroke(MewFocusColor.textTertiary.opacity(0.72), style: StrokeStyle(lineWidth: 1.2, dash: [5, 4]))
-            )
+            .popover(isPresented: $isPresetSettingsPresented, arrowEdge: .bottom) {
+                FocusPresetSettingsView(durations: $presetDurations)
+            }
         }
-    }
-
-    private var quickStartHint: some View {
-        HStack(spacing: 6) {
-            Image(systemName: "command")
-                .font(.system(size: 11, weight: .bold))
-            Text("D")
-                .font(.system(size: 12, weight: .bold))
-            Text("빠른 시작")
-                .font(.system(size: 12, weight: .bold))
-        }
-        .foregroundStyle(MewFocusColor.textTertiary)
-        .padding(.horizontal, 24)
-        .padding(.vertical, 7)
-        .background(.white.opacity(0.76))
-        .clipShape(Capsule())
-        .overlay(Capsule().stroke(MewFocusColor.divider.opacity(0.65)))
-        .padding(.top, -8)
     }
 
     private var statisticsDashboard: some View {
-        VStack(spacing: 10) {
+        VStack(spacing: 14) {
             HStack(spacing: 12) {
                 todayFocusCard
                 recentSessionsCard
@@ -272,12 +354,12 @@ public struct FocusPopoverView: View {
             }
             .foregroundStyle(MewFocusColor.textSecondary)
             .padding(.horizontal, 18)
-            .frame(height: 42)
+            .frame(height: 50)
             .background(.white.opacity(0.86))
             .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
             .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).stroke(MewFocusColor.divider.opacity(0.9)))
         }
-        .padding(.top, -2)
+        .padding(.top, 2)
     }
 
     private var todayFocusCard: some View {
@@ -382,7 +464,7 @@ public struct FocusPopoverView: View {
     private func recentSessionRow(_ record: SessionRecord) -> some View {
         HStack(spacing: 10) {
             Circle()
-                .fill(MewFocusColor.coral)
+                .fill(record.accentColor)
                 .frame(width: 8, height: 8)
 
             Text(record.title)
@@ -424,7 +506,7 @@ public struct FocusPopoverView: View {
             Color.clear
 
             Circle()
-                .fill(MewFocusColor.coral)
+                .fill(activeAccentColor)
                 .frame(width: 27, height: 27)
                 .padding(6)
                 .background(.white)
@@ -439,10 +521,10 @@ public struct FocusPopoverView: View {
 
     private var statusTitle: String {
         switch session.state {
-        case .idle: "대기 중"
-        case .running: "집중 중"
+        case .idle: timerMode == .shortBreak ? "휴식 대기" : "대기 중"
+        case .running: timerMode == .shortBreak ? "휴식 중" : "집중 중"
         case .paused: "일시정지"
-        case .completed: "완료"
+        case .completed: timerMode == .shortBreak ? "휴식 완료" : "완료"
         }
     }
 
@@ -457,10 +539,18 @@ public struct FocusPopoverView: View {
     private var statusDotColor: Color {
         switch session.state {
         case .idle: MewFocusColor.textTertiary
-        case .running: MewFocusColor.coral
+        case .running: activeAccentColor
         case .paused: MewFocusColor.textTertiary
-        case .completed: MewFocusColor.coral
+        case .completed: activeAccentColor
         }
+    }
+
+    private var activeAccentColor: Color {
+        timerMode == .shortBreak ? MewFocusColor.mint : MewFocusColor.coral
+    }
+
+    private var activeAccentLightColor: Color {
+        timerMode == .shortBreak ? MewFocusColor.mintLight : MewFocusColor.coralLight
     }
 
     private var progressAngle: Double {
@@ -476,6 +566,16 @@ public struct FocusPopoverView: View {
         max(focusTrend.map { $0.duration / 3600 }.max() ?? 0, todayFocusDuration / 3600)
     }
 
+    private var focusPresets: [FocusPreset] {
+        zip(FocusPreset.defaults, presetDurations).map { basePreset, duration in
+            FocusPreset(
+                id: basePreset.id,
+                title: presetTitle(for: duration),
+                duration: duration
+            )
+        }
+    }
+
     private func toggleSession() {
         if session.state == .running {
             tickSession(now: Date())
@@ -484,6 +584,7 @@ public struct FocusPopoverView: View {
         } else {
             if session.state == .idle || session.state == .completed {
                 hasRecordedCurrentSession = false
+                resetSessionGoalNotificationFlags()
             }
             session = startUseCase.execute(session)
             lastTickDate = Date()
@@ -491,18 +592,27 @@ public struct FocusPopoverView: View {
         saveSnapshot()
     }
 
-    private func resetSession() {
+    private func resetCurrentSession() {
+        tickSession(now: Date())
+        recordCurrentSessionIfNeeded(completedAt: Date())
         hasRecordedCurrentSession = false
+        resetSessionGoalNotificationFlags()
         lastTickDate = nil
         session = resetUseCase.execute(session)
         saveSnapshot()
     }
 
-    private func endSession() {
-        tickSession(now: Date())
-        recordCurrentSessionIfNeeded(completedAt: Date())
-        lastTickDate = nil
-        session = endUseCase.execute(session)
+    private func startShortBreak() {
+        timerMode = .shortBreak
+        hasRecordedCurrentSession = false
+        resetSessionGoalNotificationFlags()
+        session = FocusSession(
+            preset: nil,
+            duration: shortBreakDuration,
+            remainingTime: shortBreakDuration,
+            state: .running
+        )
+        lastTickDate = Date()
         saveSnapshot()
     }
 
@@ -517,11 +627,43 @@ public struct FocusPopoverView: View {
         let elapsedTime = now.timeIntervalSince(lastTickDate)
         session = tickUseCase.execute(session, elapsedTime: elapsedTime)
         self.lastTickDate = session.state == .running ? now : nil
+        evaluateSessionGoalNotifications()
 
         if session.state == .completed {
             recordCurrentSessionIfNeeded(completedAt: now)
             saveSnapshot(now: now)
         }
+    }
+
+    private func isSelectedPreset(_ preset: FocusPreset) -> Bool {
+        timerMode == .focus && session.preset?.id == preset.id
+    }
+
+    private func syncIdleSessionWithEditedPreset() {
+        guard
+            timerMode == .focus,
+            session.state == .idle,
+            let presetID = session.preset?.id,
+            let editedPreset = focusPresets.first(where: { $0.id == presetID })
+        else {
+            return
+        }
+
+        session = FocusSession(
+            preset: editedPreset,
+            duration: editedPreset.duration,
+            remainingTime: editedPreset.duration,
+            state: .idle
+        )
+        saveSnapshot()
+    }
+
+    private func presetTitle(for duration: TimeInterval) -> String {
+        if duration <= 10 {
+            return "10초"
+        }
+
+        return "\(Int(duration / 60))분"
     }
 
     private func restoreSnapshot() {
@@ -549,10 +691,12 @@ public struct FocusPopoverView: View {
         guard completedDuration >= 1 else { return }
 
         hasRecordedCurrentSession = true
+        let recordKind: SessionRecordKind = timerMode == .shortBreak ? .shortBreak : .focus
         let record = SessionRecord(
-            title: "집중",
+            title: recordKind == .shortBreak ? "휴식" : "집중",
             duration: completedDuration,
-            completedAt: completedAt
+            completedAt: completedAt,
+            kind: recordKind
         )
 
         Task {
@@ -573,11 +717,86 @@ public struct FocusPopoverView: View {
             todayFocusDuration = try await todayDuration
             recentSessions = try await recent
             focusTrend = try await trend
+            updateWidgetStatistics(
+                FocusStatisticsSnapshot(
+                    todayFocusDuration: todayFocusDuration,
+                    recentSessions: recentSessions,
+                    updatedAt: Date()
+                )
+            )
         } catch {
             todayFocusDuration = 0
             recentSessions = []
             focusTrend = []
         }
+    }
+
+    private func requestNotificationAuthorizationIfNeeded(_ settings: GoalNotificationSettings) {
+        guard settings.isHalfGoalEnabled || settings.isFullGoalEnabled else { return }
+
+        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { _, _ in }
+    }
+
+    private func evaluateSessionGoalNotifications() {
+        guard timerMode == .focus, session.duration > 0 else { return }
+
+        if goalNotificationSettings.isFullGoalEnabled,
+           session.progress >= 1,
+           !hasSentFullGoalNotification {
+            hasSentFullGoalNotification = true
+            postGoalNotification(
+                title: "목표 집중 100% 달성했어요",
+                body: "\(sessionDurationText(session.duration)) 집중을 완료했습니다."
+            )
+        } else if goalNotificationSettings.isHalfGoalEnabled,
+                  session.progress >= 0.5,
+                  !hasSentHalfGoalNotification {
+            hasSentHalfGoalNotification = true
+            postGoalNotification(
+                title: "목표 집중 50% 달성했어요",
+                body: "\(sessionDurationText(session.duration)) 집중의 절반까지 왔습니다."
+            )
+        }
+    }
+
+    private func resetSessionGoalNotificationFlags() {
+        hasSentHalfGoalNotification = false
+        hasSentFullGoalNotification = false
+    }
+
+    private func postGoalNotification(title: String, body: String) {
+        let content = UNMutableNotificationContent()
+        content.title = title
+        content.body = body
+        content.sound = .default
+
+        let request = UNNotificationRequest(
+            identifier: "mew.focus.goal.\(UUID().uuidString)",
+            content: content,
+            trigger: nil
+        )
+
+        UNUserNotificationCenter.current().add(request)
+    }
+
+    private func sessionDurationText(_ duration: TimeInterval) -> String {
+        if duration < 60 {
+            return "\(Int(duration))초"
+        }
+
+        let totalMinutes = max(Int(duration / 60), 1)
+        let hours = totalMinutes / 60
+        let minutes = totalMinutes % 60
+
+        if hours == 0 {
+            return "\(totalMinutes)분"
+        }
+
+        if minutes == 0 {
+            return "\(hours)시간"
+        }
+
+        return "\(hours)시간 \(minutes)분"
     }
 
     private func refreshStatisticsIfDayChanged(now: Date) {
@@ -734,18 +953,11 @@ private struct SessionListView: View {
                 .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
                 .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).stroke(MewFocusColor.divider.opacity(0.8)))
             } else {
-                ScrollView {
-                    VStack(spacing: 10) {
-                        ForEach(sessions) { session in
-                            SessionListRow(record: session)
-                        }
-                    }
-                }
-                .frame(maxHeight: 270)
+                SessionListScrollView(sessions: sessions)
             }
         }
         .padding(24)
-        .frame(width: 420)
+        .frame(width: 440)
         .background(MewFocusColor.surface)
     }
 
@@ -773,54 +985,203 @@ private struct SessionListView: View {
     }
 }
 
-private struct SessionListRow: View {
-    let record: SessionRecord
+private struct SessionListScrollView: View {
+    let sessions: [SessionRecord]
 
     var body: some View {
-        HStack(spacing: 12) {
-            Circle()
-                .fill(MewFocusColor.coral)
-                .frame(width: 9, height: 9)
-
-            VStack(alignment: .leading, spacing: 3) {
-                Text(record.title)
-                    .font(.system(size: 14, weight: .bold))
-                    .foregroundStyle(MewFocusColor.textPrimary)
-
-                Text(timeText)
-                    .font(.system(size: 12, weight: .bold))
-                    .foregroundStyle(MewFocusColor.textTertiary)
+        SessionListNSScrollView(sessions: sessions)
+            .frame(height: 360)
+            .transaction { transaction in
+                transaction.animation = nil
             }
+    }
+}
 
-            Spacer()
+private struct SessionListNSScrollView: NSViewRepresentable {
+    let sessions: [SessionRecord]
 
-            Text(durationText)
-                .font(.system(size: 14, weight: .bold, design: .rounded))
-                .foregroundStyle(MewFocusColor.textSecondary)
-                .monospacedDigit()
+    func makeNSView(context: Context) -> NSScrollView {
+        let scrollView = NSScrollView()
+        scrollView.drawsBackground = false
+        scrollView.hasVerticalScroller = true
+        scrollView.hasHorizontalScroller = false
+        scrollView.autohidesScrollers = false
+        scrollView.scrollerStyle = .legacy
+        scrollView.verticalScroller = CoralSessionScroller()
+        scrollView.verticalScrollElasticity = .automatic
+        scrollView.horizontalScrollElasticity = .none
+        scrollView.contentInsets = NSEdgeInsets(top: 0, left: 0, bottom: 0, right: 12)
+
+        let hostingView = NSHostingView(rootView: SessionListContent(sessions: sessions))
+        hostingView.translatesAutoresizingMaskIntoConstraints = false
+        hostingView.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        hostingView.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+
+        let documentView = NSView()
+        documentView.translatesAutoresizingMaskIntoConstraints = false
+        documentView.addSubview(hostingView)
+        scrollView.documentView = documentView
+
+        NSLayoutConstraint.activate([
+            hostingView.topAnchor.constraint(equalTo: documentView.topAnchor),
+            hostingView.leadingAnchor.constraint(equalTo: documentView.leadingAnchor),
+            hostingView.trailingAnchor.constraint(equalTo: documentView.trailingAnchor),
+            hostingView.bottomAnchor.constraint(equalTo: documentView.bottomAnchor),
+            hostingView.widthAnchor.constraint(equalTo: scrollView.contentView.widthAnchor, constant: -14)
+        ])
+
+        context.coordinator.hostingView = hostingView
+        return scrollView
+    }
+
+    func updateNSView(_ scrollView: NSScrollView, context: Context) {
+        context.coordinator.hostingView?.rootView = SessionListContent(sessions: sessions)
+        scrollView.verticalScroller?.needsDisplay = true
+    }
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator()
+    }
+
+    final class Coordinator {
+        var hostingView: NSHostingView<SessionListContent>?
+    }
+}
+
+private struct SessionListContent: View {
+    let sessions: [SessionRecord]
+
+    var body: some View {
+        LazyVStack(spacing: 8) {
+            ForEach(sessions) { session in
+                SessionListRow(record: session)
+            }
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 12)
-        .background(.white.opacity(0.86))
-        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).stroke(MewFocusColor.divider.opacity(0.8)))
+        .padding(.trailing, 12)
+    }
+}
+
+private final class CoralSessionScroller: NSScroller {
+    override class func scrollerWidth(for controlSize: NSControl.ControlSize, scrollerStyle: NSScroller.Style) -> CGFloat {
+        7
     }
 
-    private var timeText: String {
-        let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "ko_KR")
-        formatter.dateFormat = "a h:mm"
-        return formatter.string(from: record.completedAt)
+    override func drawKnobSlot(in slotRect: NSRect, highlight flag: Bool) {
+        let trackRect = slotRect.insetBy(dx: 1, dy: 2)
+        NSColor(calibratedRed: 0.90, green: 0.90, blue: 0.92, alpha: 0.62).setFill()
+        NSBezierPath(roundedRect: trackRect, xRadius: 4, yRadius: 4).fill()
     }
 
-    private var durationText: String {
-        let totalMinutes = max(Int(record.duration / 60), 1)
-        return "\(totalMinutes)분"
+    override func drawKnob() {
+        let knobRect = rect(for: .knob).insetBy(dx: 1, dy: 2)
+        NSColor(calibratedRed: 1.00, green: 0.38, blue: 0.27, alpha: 0.78).setFill()
+        NSBezierPath(roundedRect: knobRect, xRadius: 4, yRadius: 4).fill()
     }
 }
 
 private struct FocusSettingsView: View {
-    @ObservedObject var displaySettings: FocusPopoverDisplaySettings
+    @Binding var notificationSettings: GoalNotificationSettings
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            HStack(spacing: 12) {
+                Image(systemName: "bell.badge")
+                    .font(.system(size: 18, weight: .bold))
+                    .foregroundStyle(MewFocusColor.coral)
+                    .frame(width: 34, height: 34)
+                    .background(MewFocusColor.coral.opacity(0.12))
+                    .clipShape(Circle())
+
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("설정")
+                        .font(.system(size: 20, weight: .bold))
+                        .foregroundStyle(MewFocusColor.textPrimary)
+                    Text("목표 집중 알림을 관리합니다.")
+                        .font(.system(size: 13, weight: .bold))
+                        .foregroundStyle(MewFocusColor.textSecondary)
+                }
+
+                Spacer()
+            }
+
+            VStack(spacing: 10) {
+                FocusNotificationToggleRow(
+                    title: "50% 달성 알림",
+                    subtitle: "현재 집중 시간의 절반에서 알려줘요.",
+                    isOn: $notificationSettings.isHalfGoalEnabled
+                )
+
+                FocusNotificationToggleRow(
+                    title: "100% 달성 알림",
+                    subtitle: "현재 집중 시간이 끝나면 알려줘요.",
+                    isOn: $notificationSettings.isFullGoalEnabled
+                )
+            }
+        }
+        .padding(22)
+        .frame(width: 390)
+        .background(MewFocusColor.surface)
+    }
+}
+
+private struct FocusNotificationToggleRow: View {
+    let title: String
+    let subtitle: String
+    @Binding var isOn: Bool
+
+    var body: some View {
+        HStack(spacing: 14) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text(title)
+                    .font(.system(size: 15, weight: .bold))
+                    .foregroundStyle(MewFocusColor.textPrimary)
+
+                Text(subtitle)
+                    .font(.system(size: 12, weight: .bold))
+                    .foregroundStyle(MewFocusColor.textSecondary)
+            }
+
+            Spacer()
+
+            FocusNotificationSwitch(isOn: $isOn)
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 13)
+        .background(.white.opacity(0.88))
+        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).stroke(MewFocusColor.divider.opacity(0.85)))
+    }
+}
+
+private struct FocusNotificationSwitch: View {
+    @Binding var isOn: Bool
+
+    var body: some View {
+        Button {
+            isOn.toggle()
+        } label: {
+            ZStack(alignment: isOn ? .trailing : .leading) {
+                Capsule()
+                    .fill(isOn ? MewFocusColor.coral : MewFocusColor.divider)
+                    .frame(width: 48, height: 28)
+
+                Circle()
+                    .fill(.white)
+                    .frame(width: 22, height: 22)
+                    .padding(.horizontal, 3)
+                    .shadow(color: .black.opacity(0.16), radius: 4, x: 0, y: 2)
+            }
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(isOn ? "알림 켜짐" : "알림 꺼짐")
+        .animation(.spring(response: 0.22, dampingFraction: 0.82), value: isOn)
+    }
+}
+
+private struct FocusPresetSettingsView: View {
+    @Binding var durations: [TimeInterval]
+
+    @State private var minuteTexts: [String] = []
 
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
@@ -833,10 +1194,10 @@ private struct FocusSettingsView: View {
                     .clipShape(Circle())
 
                 VStack(alignment: .leading, spacing: 3) {
-                    Text("설정")
+                    Text("프리셋 설정")
                         .font(.system(size: 20, weight: .bold))
                         .foregroundStyle(MewFocusColor.textPrimary)
-                    Text("메뉴바 팝오버 크기를 조절합니다.")
+                    Text("최대 5개까지 1분 단위로 조정합니다.")
                         .font(.system(size: 13, weight: .bold))
                         .foregroundStyle(MewFocusColor.textSecondary)
                 }
@@ -844,55 +1205,205 @@ private struct FocusSettingsView: View {
                 Spacer()
             }
 
-            VStack(alignment: .leading, spacing: 12) {
-                HStack(alignment: .firstTextBaseline) {
-                    Text("화면 크기")
-                        .font(.system(size: 14, weight: .bold))
-                        .foregroundStyle(MewFocusColor.textPrimary)
-
-                    Spacer()
-
-                    Text(scaleText)
-                        .font(.system(size: 13, weight: .bold, design: .rounded))
-                        .foregroundStyle(MewFocusColor.textSecondary)
-                        .monospacedDigit()
+            VStack(spacing: 10) {
+                ForEach(0..<FocusPresetStorage.defaultDurations.count, id: \.self) { index in
+                    FocusPresetSettingRow(
+                        index: index,
+                        duration: duration(at: index),
+                        minuteText: minuteTextBinding(at: index)
+                    )
                 }
-
-                Slider(
-                    value: $displaySettings.scale,
-                    in: FocusPopoverDisplaySettings.minimumScale...FocusPopoverDisplaySettings.maximumScale,
-                    step: 0.02
-                )
-                .tint(MewFocusColor.coral)
-
-                HStack {
-                    Text("작게")
-                    Spacer()
-                    Text("크게")
-                }
-                .font(.system(size: 11, weight: .bold))
-                .foregroundStyle(MewFocusColor.textTertiary)
-
-                Button("기본 크기로") {
-                    displaySettings.resetScale()
-                }
-                .buttonStyle(.plain)
-                .font(.system(size: 13, weight: .bold))
-                .foregroundStyle(MewFocusColor.coral)
-                .padding(.top, 2)
             }
-            .padding(16)
-            .background(.white.opacity(0.88))
-            .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-            .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).stroke(MewFocusColor.divider.opacity(0.85)))
+
+            Button {
+                applyPresetEdits()
+            } label: {
+                Label("수정하기", systemImage: "checkmark")
+                    .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.plain)
+            .font(.system(size: 14, weight: .bold))
+            .foregroundStyle(.white)
+            .padding(.vertical, 12)
+            .background(MewFocusColor.coral)
+            .clipShape(Capsule())
         }
         .padding(22)
-        .frame(width: 340)
+        .frame(width: 390)
         .background(MewFocusColor.surface)
+        .onAppear {
+            syncMinuteTexts(force: true)
+        }
+        .onChange(of: durations) { _, _ in
+            syncMinuteTexts(force: false)
+        }
     }
 
-    private var scaleText: String {
-        "\(Int((displaySettings.scale * 100).rounded()))%"
+    private func duration(at index: Int) -> TimeInterval {
+        guard durations.indices.contains(index) else {
+            return FocusPresetStorage.defaultDurations[index]
+        }
+
+        return durations[index]
+    }
+
+    private func minuteTextBinding(at index: Int) -> Binding<String> {
+        Binding(
+            get: {
+                guard minuteTexts.indices.contains(index) else { return "" }
+                return minuteTexts[index]
+            },
+            set: { value in
+                var nextTexts = normalizedMinuteTexts(minuteTexts)
+                guard nextTexts.indices.contains(index) else { return }
+
+                nextTexts[index] = String(value.filter(\.isNumber).prefix(3))
+                minuteTexts = nextTexts
+            }
+        )
+    }
+
+    private func syncMinuteTexts(force: Bool) {
+        if !force, !minuteTexts.isEmpty {
+            return
+        }
+
+        minuteTexts = durationsForEditing.map { duration in
+            duration <= 10 ? "" : "\(Int(duration / 60))"
+        }
+    }
+
+    private func applyPresetEdits() {
+        let currentDurations = durationsForEditing
+        let nextDurations = normalizedMinuteTexts(minuteTexts).enumerated().map { index, text in
+            guard !text.isEmpty, let minutes = Int(text) else {
+                return currentDurations[index]
+            }
+
+            return TimeInterval(min(max(minutes, 1), 180) * 60)
+        }
+        durations = FocusPresetStorage.normalizedDurations(nextDurations)
+        minuteTexts = durations.map { $0 <= 10 ? "" : "\(Int($0 / 60))" }
+    }
+
+    private var durationsForEditing: [TimeInterval] {
+        FocusPresetStorage.normalizedDurations(durations)
+    }
+
+    private func normalizedMinuteTexts(_ texts: [String]) -> [String] {
+        Array((texts + Array(repeating: "", count: FocusPresetStorage.defaultDurations.count)).prefix(FocusPresetStorage.defaultDurations.count))
+    }
+}
+
+private struct FocusPresetSettingRow: View {
+    let index: Int
+    let duration: TimeInterval
+    @Binding var minuteText: String
+
+    @FocusState private var isInputFocused: Bool
+
+    var body: some View {
+        HStack(spacing: 12) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text("프리셋 \(index + 1)")
+                    .font(.system(size: 12, weight: .bold))
+                    .foregroundStyle(MewFocusColor.textTertiary)
+                Text(durationText)
+                    .font(.system(size: 19, weight: .bold, design: .rounded))
+                    .foregroundStyle(MewFocusColor.textPrimary)
+                    .monospacedDigit()
+            }
+
+            Spacer()
+
+            HStack(spacing: 7) {
+                TextField("분", text: $minuteText)
+                    .textFieldStyle(.plain)
+                    .font(.system(size: 16, weight: .bold, design: .rounded))
+                    .foregroundStyle(MewFocusColor.textPrimary)
+                    .multilineTextAlignment(.trailing)
+                    .monospacedDigit()
+                    .focused($isInputFocused)
+                    .frame(width: 54, height: 34)
+                    .padding(.horizontal, 10)
+                    .background(.white)
+                    .clipShape(Capsule())
+                    .overlay(
+                        Capsule()
+                            .stroke(isInputFocused ? MewFocusColor.coral : MewFocusColor.divider, lineWidth: 1.2)
+                    )
+                    .onChange(of: minuteText) { _, value in
+                        minuteText = sanitizedMinuteText(value)
+                    }
+
+                Text("분")
+                    .font(.system(size: 13, weight: .bold))
+                    .foregroundStyle(MewFocusColor.textSecondary)
+            }
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 12)
+        .background(.white.opacity(0.88))
+        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).stroke(MewFocusColor.divider.opacity(0.85)))
+    }
+
+    private var durationText: String {
+        if duration <= 10 {
+            return "10초"
+        }
+
+        return "\(Int(duration / 60))분"
+    }
+
+    private func sanitizedMinuteText(_ value: String) -> String {
+        String(value.filter(\.isNumber).prefix(3))
+    }
+}
+
+private struct SessionListRow: View {
+    let record: SessionRecord
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Circle()
+                .fill(record.accentColor)
+                .frame(width: 8, height: 8)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(record.title)
+                    .font(.system(size: 13, weight: .bold))
+                    .foregroundStyle(MewFocusColor.textPrimary)
+
+                Text(timeText)
+                    .font(.system(size: 11, weight: .bold))
+                    .foregroundStyle(MewFocusColor.textTertiary)
+            }
+
+            Spacer()
+
+            Text(durationText)
+                .font(.system(size: 13, weight: .bold, design: .rounded))
+                .foregroundStyle(MewFocusColor.textSecondary)
+                .monospacedDigit()
+        }
+        .padding(.horizontal, 13)
+        .padding(.vertical, 9)
+        .background(.white.opacity(0.86))
+        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).stroke(MewFocusColor.divider.opacity(0.8)))
+    }
+
+    private var timeText: String {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "ko_KR")
+        formatter.dateFormat = "a h:mm"
+        return formatter.string(from: record.completedAt)
+    }
+
+    private var durationText: String {
+        let totalMinutes = max(Int(record.duration / 60), 1)
+        return "\(totalMinutes)분"
     }
 }
 
