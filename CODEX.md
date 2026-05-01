@@ -76,7 +76,7 @@ Overall direction:
 
 Main popover layout:
 
-- Top header with cat icon, product title `Focus Dial`, subtitle `집중에 몰입하는 시간`, and a settings gear icon on the right.
+- Top header with cat icon, product title `Mew Focus`, subtitle `집중에 몰입하는 시간`, and a settings gear icon on the right.
 - Large circular timer is the visual center of the app.
 - Timer center contains a label, a small status pill, and a large remaining-time readout such as `22:14`.
 - Cat illustration peeks from the lower area of the timer circle.
