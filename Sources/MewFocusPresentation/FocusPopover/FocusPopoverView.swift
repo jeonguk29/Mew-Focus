@@ -1118,6 +1118,44 @@ private struct FocusSettingsView: View {
                     isOn: $notificationSettings.isFullGoalEnabled
                 )
             }
+
+            Button {
+                NSApplication.shared.terminate(nil)
+            } label: {
+                HStack(spacing: 14) {
+                    Image(systemName: "power")
+                        .font(.system(size: 16, weight: .bold))
+                        .foregroundStyle(MewFocusColor.coral)
+                        .frame(width: 30, height: 30)
+                        .background(MewFocusColor.coral.opacity(0.10))
+                        .clipShape(Circle())
+
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Mew Focus 종료")
+                            .font(.system(size: 15, weight: .bold))
+                            .foregroundStyle(MewFocusColor.textPrimary)
+
+                        Text("메뉴바 앱을 완전히 종료합니다.")
+                            .font(.system(size: 12, weight: .bold))
+                            .foregroundStyle(MewFocusColor.textSecondary)
+                    }
+
+                    Spacer()
+
+                    Image(systemName: "xmark")
+                        .font(.system(size: 12, weight: .bold))
+                        .foregroundStyle(MewFocusColor.textTertiary)
+                }
+                .padding(.horizontal, 14)
+                .padding(.vertical, 13)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(.white.opacity(0.88))
+                .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).stroke(MewFocusColor.divider.opacity(0.85)))
+                .contentShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+            }
+            .buttonStyle(.plain)
+            .contentShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
         }
         .padding(22)
         .frame(width: 390)
